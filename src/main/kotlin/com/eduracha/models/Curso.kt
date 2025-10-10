@@ -22,5 +22,6 @@ data class Curso(
     val duracionDias: Int = 0,
     val temas: Map<String, Tema>? = null,
     val estado: String = "",
-    val fechaCreacion: String = ""
+    val fechaCreacion: String = "",
+
 )
