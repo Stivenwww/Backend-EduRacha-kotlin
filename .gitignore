@@ -32,6 +32,8 @@ out/
 /nbdist/
 /.nb-gradle/
 
+# Archivos de configuración privada
+.env
 src/main/resources/serviceAccountKey.json
 
 ### VS Code ###

@@ -14,7 +14,7 @@ fun Application.solicitudCursoRoutes() {
     routing {
         route("/api/solicitudes") {
 
-            // 🧍‍♂️ Estudiante solicita unirse con código
+            //  Estudiante solicita unirse con código
             post("/unirse") {
                 val request = call.receive<SolicitudRequest>()
                 val curso = repo.buscarCursoPorCodigo(request.codigoCurso)
@@ -36,7 +36,7 @@ fun Application.solicitudCursoRoutes() {
                 call.respond(mapOf("message" to "Solicitud enviada", "id" to id))
             }
 
-            // 👨‍🏫 Ver solicitudes pendientes del docente
+            //  Ver solicitudes pendientes del docente
             get("/docente/{docenteId}") {
                 val docenteId = call.parameters["docenteId"]
                     ?: return@get call.respond(HttpStatusCode.BadRequest)
@@ -44,7 +44,7 @@ fun Application.solicitudCursoRoutes() {
                 call.respond(solicitudes)
             }
 
-            // 🧍 Ver solicitudes del estudiante
+            //  Ver solicitudes del estudiante
             get("/estudiante/{estudianteId}") {
                 val estudianteId = call.parameters["estudianteId"]
                     ?: return@get call.respond(HttpStatusCode.BadRequest)
@@ -52,7 +52,7 @@ fun Application.solicitudCursoRoutes() {
                 call.respond(solicitudes)
             }
 
-            // 👨‍🏫 Profesor responde (aceptar o rechazar)
+            //  Profesor responde (aceptar o rechazar)
             post("/responder/{solicitudId}") {
                 val solicitudId = call.parameters["solicitudId"]
                     ?: return@post call.respond(HttpStatusCode.BadRequest)
@@ -70,7 +70,7 @@ fun Application.solicitudCursoRoutes() {
                 }
             }
 
-            // 🔍 Ver detalle de una solicitud
+            //  Ver detalle de una solicitud
             get("/{solicitudId}") {
                 val solicitudId = call.parameters["solicitudId"]
                     ?: return@get call.respond(HttpStatusCode.BadRequest)

@@ -2,21 +2,26 @@ package com.eduracha.utils
 
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
+import com.google.auth.oauth2.GoogleCredentials
 import java.io.FileInputStream
 
 object FirebaseInit {
 
-    fun initialize() {
+    fun initialize(credentialsPath: String?, databaseUrl: String?) {
         if (FirebaseApp.getApps().isNotEmpty()) return
 
-        val serviceAccount = FileInputStream("src/main/resources/serviceAccountKey.json")
+        if (credentialsPath.isNullOrEmpty() || databaseUrl.isNullOrEmpty()) {
+            throw IllegalStateException("No se encontró GOOGLE_APPLICATION_CREDENTIALS o FIREBASE_DATABASE_URL en las variables de entorno.")
+        }
+
+        val serviceAccount = FileInputStream(credentialsPath)
 
         val options = FirebaseOptions.builder()
-            .setCredentials(com.google.auth.oauth2.GoogleCredentials.fromStream(serviceAccount))
-            .setDatabaseUrl("https://eduracha-41314-default-rtdb.firebaseio.com/") 
+            .setCredentials(GoogleCredentials.fromStream(serviceAccount))
+            .setDatabaseUrl(databaseUrl)
             .build()
 
         FirebaseApp.initializeApp(options)
-        println("✅ Firebase inicializado correctamente.")
+        println("Firebase inicializado correctamente con URL: $databaseUrl")
     }
 }

@@ -41,7 +41,7 @@ fun Route.authRoutes() {
         }
     }
 
-    // 🔹 Login con correo y contraseña
+    //  Login con correo y contraseña
     post("/login") {
         val credenciales = call.receive<User>()
 
@@ -63,7 +63,7 @@ fun Route.authRoutes() {
         }
     }
 
-    // 🔹 Login con Google
+    //  Login con Google
     post("/login/google") {
         val data = call.receive<GoogleLoginRequest>()
         try {

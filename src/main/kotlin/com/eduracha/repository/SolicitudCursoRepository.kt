@@ -11,7 +11,7 @@ class SolicitudCursoRepository {
     private val refSolicitudes = db.getReference("solicitudes")
     private val refCursos = db.getReference("cursos")
 
-    // 🔍 Buscar curso por código
+    //  Buscar curso por código
     suspend fun buscarCursoPorCodigo(codigo: String): Curso? = suspendCancellableCoroutine { cont ->
         refCursos.orderByChild("codigo").equalTo(codigo)
             .addListenerForSingleValueEvent(object : ValueEventListener {
@@ -26,7 +26,7 @@ class SolicitudCursoRepository {
             })
     }
 
-    // 🧩 Verificar si ya existe una solicitud
+    //  Verificar si ya existe una solicitud
     suspend fun verificarSolicitudExistente(estudianteId: String, cursoId: String): Boolean =
         suspendCancellableCoroutine { cont ->
             refSolicitudes.orderByChild("estudianteId").equalTo(estudianteId)
@@ -45,7 +45,7 @@ class SolicitudCursoRepository {
                 })
         }
 
-    // 📝 Crear solicitud (sin await)
+    // Crear solicitud (sin await)
     suspend fun crearSolicitud(solicitud: SolicitudCurso): String = suspendCancellableCoroutine { cont ->
         val nuevaRef = refSolicitudes.push()
         val id = nuevaRef.key ?: return@suspendCancellableCoroutine cont.resumeWithException(
@@ -58,7 +58,7 @@ class SolicitudCursoRepository {
         }
     }
 
-    // 👨‍🏫 Solicitudes pendientes
+    //  Solicitudes pendientes
     suspend fun obtenerSolicitudesPendientesPorDocente(docenteId: String): List<SolicitudCurso> =
         suspendCancellableCoroutine { cont ->
             refSolicitudes.orderByChild("estado").equalTo(EstadoSolicitud.PENDIENTE.name)
@@ -78,7 +78,7 @@ class SolicitudCursoRepository {
                 })
         }
 
-    // 🧾 Solicitudes por estudiante
+    //  Solicitudes por estudiante
     suspend fun obtenerSolicitudesPorEstudiante(estudianteId: String): List<SolicitudCurso> =
         suspendCancellableCoroutine { cont ->
             refSolicitudes.orderByChild("estudianteId").equalTo(estudianteId)
@@ -96,7 +96,7 @@ class SolicitudCursoRepository {
                 })
         }
 
-    // 🔄 Actualizar estado
+    //  Actualizar estado
     suspend fun actualizarEstadoSolicitud(id: String, estado: EstadoSolicitud, mensaje: String?) =
         suspendCancellableCoroutine<Unit> { cont ->
             val updates = mapOf(
@@ -111,7 +111,7 @@ class SolicitudCursoRepository {
             }
         }
 
-    // 👥 Agregar estudiante al curso
+    //  Agregar estudiante al curso
     suspend fun agregarEstudianteACurso(cursoId: String, estudianteId: String) =
         suspendCancellableCoroutine<Unit> { cont ->
             val refEstudiantes = refCursos.child(cursoId).child("estudiantes")
@@ -123,7 +123,7 @@ class SolicitudCursoRepository {
             }
         }
 
-    // 🔍 Obtener una solicitud por ID
+    //  Obtener una solicitud por ID
     suspend fun obtenerSolicitudPorId(id: String): SolicitudCurso? = suspendCancellableCoroutine { cont ->
         refSolicitudes.child(id).addListenerForSingleValueEvent(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {

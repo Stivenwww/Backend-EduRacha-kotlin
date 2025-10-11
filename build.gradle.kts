@@ -35,12 +35,18 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.8.1")
 
+    // para cargar variables de entorno desde un archivo .env
+    implementation("io.github.cdimascio:dotenv-kotlin:6.4.1")
+
+    //usar el cliente HTTP de Ktor
+    implementation("io.ktor:ktor-client-core:3.3.0")
+    implementation("io.ktor:ktor-client-cio:3.3.0")
 
 
-    //implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
     implementation("io.ktor:ktor-server-cors:2.3.12")
 
     testImplementation("io.ktor:ktor-server-tests:2.3.12")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:1.9.23")
 }
+
