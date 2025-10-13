@@ -78,6 +78,22 @@ fun Application.preguntaRoutes() {
                     call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
                 }
             }
+              //  Obtener preguntas por curso 
+            get("/curso/{cursoId}") {
+                val cursoId = call.parameters["cursoId"]
+                    ?: return@get call.respondText("Falta cursoId", status = HttpStatusCode.BadRequest)
+
+                try {
+                    val preguntas = repo.obtenerPreguntasPorCurso(cursoId)
+                    if (preguntas.isEmpty()) {
+                        call.respondText("No hay preguntas para este curso", status = HttpStatusCode.NotFound)
+                    } else {
+                        call.respond(preguntas)
+                    }
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+                }
+            }
         }
     }
 }

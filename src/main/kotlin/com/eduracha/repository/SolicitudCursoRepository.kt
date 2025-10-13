@@ -10,6 +10,7 @@ class SolicitudCursoRepository {
     private val db = FirebaseDatabase.getInstance()
     private val refSolicitudes = db.getReference("solicitudes")
     private val refCursos = db.getReference("cursos")
+    
 
     //  Buscar curso por código
     suspend fun buscarCursoPorCodigo(codigo: String): Curso? = suspendCancellableCoroutine { cont ->
@@ -45,7 +46,7 @@ class SolicitudCursoRepository {
                 })
         }
 
-    // Crear solicitud (sin await)
+    // Crear solicitud 
     suspend fun crearSolicitud(solicitud: SolicitudCurso): String = suspendCancellableCoroutine { cont ->
         val nuevaRef = refSolicitudes.push()
         val id = nuevaRef.key ?: return@suspendCancellableCoroutine cont.resumeWithException(
@@ -128,6 +129,47 @@ class SolicitudCursoRepository {
         refSolicitudes.child(id).addListenerForSingleValueEvent(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 cont.resume(snapshot.getValue(SolicitudCurso::class.java))
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                cont.resumeWithException(error.toException())
+            }
+        })
+    }
+suspend fun obtenerCorreosEstudiantesPorCurso(cursoId: String): List<String> =
+    suspendCancellableCoroutine { cont ->
+        val refEstudiantes = refCursos.child(cursoId).child("estudiantes")
+        val refUsuarios = db.getReference("usuarios")
+
+        // Leer los IDs de los estudiantes inscritos en el curso
+        refEstudiantes.addListenerForSingleValueEvent(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val ids = snapshot.children.mapNotNull { it.getValue(String::class.java) }
+
+                if (ids.isEmpty()) {
+                    cont.resume(emptyList())
+                    return
+                }
+
+                // Leer todos los usuarios y cruzar con los IDs de estudiantes
+                refUsuarios.addListenerForSingleValueEvent(object : ValueEventListener {
+                    override fun onDataChange(usuariosSnap: DataSnapshot) {
+                        val correos = usuariosSnap.children.mapNotNull { userSnap ->
+                            val userId = userSnap.key
+                            val correo = userSnap.child("correo").getValue(String::class.java)
+                            if (userId != null && ids.contains(userId)) {
+                                correo
+                            } else {
+                                null
+                            }
+                        }
+                        cont.resume(correos)
+                    }
+
+                    override fun onCancelled(error: DatabaseError) {
+                        cont.resumeWithException(error.toException())
+                    }
+                })
             }
 
             override fun onCancelled(error: DatabaseError) {

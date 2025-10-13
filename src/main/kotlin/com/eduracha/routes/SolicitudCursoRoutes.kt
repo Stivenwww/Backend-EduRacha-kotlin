@@ -10,6 +10,7 @@ import io.ktor.server.routing.*
 
 fun Application.solicitudCursoRoutes() {
     val repo = SolicitudCursoRepository()
+    val solicitudCursoRepository = SolicitudCursoRepository() 
 
     routing {
         route("/api/solicitudes") {
@@ -80,6 +81,25 @@ fun Application.solicitudCursoRoutes() {
                 else
                     call.respond(solicitud)
             }
+
+            // Obtener correos de estudiantes por curso
+           get("/curso/{id}/estudiantes") {
+        val cursoId = call.parameters["id"]
+
+        if (cursoId == null) {
+            call.respond(HttpStatusCode.BadRequest, "Falta el ID del curso")
+            return@get
+        }
+
+        try {
+            val correos = solicitudCursoRepository.obtenerCorreosEstudiantesPorCurso(cursoId)
+            call.respond(correos)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            call.respond(HttpStatusCode.InternalServerError, "Error al obtener los correos: ${e.message}")
         }
     }
 }
+        }
+    }
+

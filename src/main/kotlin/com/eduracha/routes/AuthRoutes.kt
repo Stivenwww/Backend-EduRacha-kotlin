@@ -16,30 +16,50 @@ fun Route.authRoutes() {
 
     // Registro de usuario
     post("/registro") {
-        val datos = call.receive<RegistroRequest>()
-        try {
-            val userRecord = firebaseAuth.createUser(
-                UserRecord.CreateRequest()
-                    .setEmail(datos.correo)
-                    .setPassword(datos.contrasena)
-                    .setDisplayName(datos.nombreCompleto)
-            )
+    val datos = call.receive<RegistroRequest>()
+    val database = com.google.firebase.database.FirebaseDatabase.getInstance()
+    val refUsuarios = database.getReference("usuarios")
 
-            // Guardar el rol como claim personalizado
-            firebaseAuth.setCustomUserClaims(userRecord.uid, mapOf("rol" to datos.rol))
+    try {
+        //  Crear usuario en Firebase Authentication
+        val userRecord = firebaseAuth.createUser(
+            UserRecord.CreateRequest()
+                .setEmail(datos.correo)
+                .setPassword(datos.contrasena)
+                .setDisplayName(datos.nombreCompleto)
+        )
 
-            call.respond(HttpStatusCode.Created, mapOf(
+        //  Guardar rol como claim personalizado
+        firebaseAuth.setCustomUserClaims(userRecord.uid, mapOf("rol" to datos.rol))
+
+        //  Guardar información adicional en Realtime Database
+        val usuarioInfo = mapOf(
+            "uid" to userRecord.uid,
+            "nombreCompleto" to datos.nombreCompleto,
+            "apodo" to datos.apodo,
+            "correo" to datos.correo,
+            "rol" to datos.rol,
+            "fechaRegistro" to System.currentTimeMillis()
+        )
+
+        refUsuarios.child(userRecord.uid).setValueAsync(usuarioInfo)
+
+        // Responder al cliente
+        call.respond(
+            HttpStatusCode.Created,
+            mapOf(
                 "uid" to userRecord.uid,
                 "correo" to datos.correo,
                 "rol" to datos.rol,
                 "nombreCompleto" to datos.nombreCompleto,
                 "apodo" to datos.apodo
-            ))
-        } catch (e: Exception) {
-            e.printStackTrace()
-            call.respond(HttpStatusCode.BadRequest, "Error al registrar usuario: ${e.message}")
-        }
+            )
+        )
+    } catch (e: Exception) {
+        e.printStackTrace()
+        call.respond(HttpStatusCode.BadRequest, "Error al registrar usuario: ${e.message}")
     }
+}
 
     //  Login con correo y contraseña
     post("/login") {
