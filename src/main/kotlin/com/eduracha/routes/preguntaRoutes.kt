@@ -94,6 +94,25 @@ fun Application.preguntaRoutes() {
                     call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
                 }
             }
+            // Obtener preguntas del banco de preguntas por curso y tema
+get("/banco/{cursoId}/{temaId}") {
+    val cursoId = call.parameters["cursoId"]
+        ?: return@get call.respond(HttpStatusCode.BadRequest, "Falta cursoId")
+    val temaId = call.parameters["temaId"]
+        ?: return@get call.respond(HttpStatusCode.BadRequest, "Falta temaId")
+
+    try {
+        val preguntasBanco = repo.obtenerBancoPreguntas(cursoId, temaId)
+        if (preguntasBanco.isEmpty()) {
+            call.respondText("No hay preguntas aprobadas en el banco para este tema", status = HttpStatusCode.NotFound)
+        } else {
+            call.respond(preguntasBanco)
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+    }
+}
         }
     }
 }

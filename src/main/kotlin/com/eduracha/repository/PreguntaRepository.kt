@@ -155,4 +155,20 @@ class PreguntaRepository {
             }
         })
     }
+
+    // Obtener preguntas del banco de preguntas por curso y tema
+    suspend fun obtenerBancoPreguntas(cursoId: String, temaId: String): List<Pregunta> = suspendCancellableCoroutine { cont ->
+        val refBanco = database.getReference("banco_preguntas/$cursoId/$temaId")
+
+        refBanco.addListenerForSingleValueEvent(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val lista = snapshot.children.mapNotNull { it.getValue(Pregunta::class.java) }
+                cont.resume(lista)
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                cont.resumeWithException(error.toException())
+            }
+        })
+    }
 }
