@@ -5,7 +5,6 @@ import com.eduracha.routes.usuarioRoutes
 import com.eduracha.routes.cursoRoutes
 import com.eduracha.routes.solicitudCursoRoutes
 import com.eduracha.routes.chatRoutes
-import com.eduracha.routes.preguntaRoutes
 import com.eduracha.utils.FirebaseInit
 import com.google.firebase.database.FirebaseDatabase
 import io.github.cdimascio.dotenv.dotenv
@@ -17,7 +16,8 @@ import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import com.eduracha.repository.PreguntaRepository  
-import com.eduracha.routes.preguntasIARoutes 
+import com.eduracha.routes.preguntasRoutes
+
 
 fun main() {
     embeddedServer(Netty, port = 8080, module = Application::module)
@@ -60,7 +60,8 @@ fun Application.module() {
         cursoRoutes()
         solicitudCursoRoutes()
         chatRoutes()
-        preguntaRoutes()
-        preguntasIARoutes()
+        preguntasRoutes()
+
+       
     }
 }

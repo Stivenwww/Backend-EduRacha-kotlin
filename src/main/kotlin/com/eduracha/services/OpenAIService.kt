@@ -100,7 +100,6 @@ class OpenAIService(private val client: HttpClient, private val openAiApiKey: St
         val respText = response.bodyAsText()
 
         try {
-            // Leer el contenido
             val root = json.parseToJsonElement(respText).jsonObject
             val content = root["choices"]
                 ?.jsonArray?.firstOrNull()
@@ -109,28 +108,22 @@ class OpenAIService(private val client: HttpClient, private val openAiApiKey: St
                 ?.jsonPrimitive?.content
                 ?: throw IllegalStateException("No se encontró contenido en la respuesta de OpenAI")
 
-            // Limpia posibles caracteres extra o markdown
             val cleanContent = content
                 .replace("```json", "")
                 .replace("```", "")
                 .trim()
 
-            // Intenta convertir el texto limpio a JSON
             val parsed = json.parseToJsonElement(cleanContent).jsonObject
             val preguntasArray = parsed["preguntas"]?.jsonArray
                 ?: throw IllegalStateException("No se encontró el campo 'preguntas'")
 
-            // Decodificar la lista de preguntas
             val aiPreguntas = preguntasArray.map {
                 json.decodeFromJsonElement<PreguntaAI>(it)
             }
 
-            // Guardar en Firebase
+            // Guardar en Firebase directamente en el nodo "preguntas"
             val refBase = FirebaseDatabase.getInstance()
                 .getReference("preguntas")
-                .child("pendientes")
-                .child(cursoId)
-                .child(temaId)
 
             val saved = mutableListOf<com.eduracha.models.Pregunta>()
             for (ai in aiPreguntas) {
@@ -168,7 +161,7 @@ class OpenAIService(private val client: HttpClient, private val openAiApiKey: St
             return saved
 
         } catch (e: Exception) {
-            println(" Error al interpretar la respuesta JSON: ${e.message}")
+            println("Error al interpretar la respuesta JSON: ${e.message}")
             println("Respuesta cruda de OpenAI:\n$respText")
             throw IllegalStateException("Error al interpretar la respuesta JSON de OpenAI.")
         }
