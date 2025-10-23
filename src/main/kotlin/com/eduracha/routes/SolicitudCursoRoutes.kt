@@ -7,99 +7,194 @@ import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.coroutines.*
 
 fun Application.solicitudCursoRoutes() {
     val repo = SolicitudCursoRepository()
-    val solicitudCursoRepository = SolicitudCursoRepository() 
 
     routing {
         route("/api/solicitudes") {
 
-            //  Estudiante solicita unirse con código
+            // Estudiante solicita unirse con código
             post("/unirse") {
-                val request = call.receive<SolicitudRequest>()
-                val curso = repo.buscarCursoPorCodigo(request.codigoCurso)
-                    ?: return@post call.respond(HttpStatusCode.NotFound, "Código de curso inválido")
+                try {
+                    val request = call.receive<SolicitudRequest>()
 
-                val existe = repo.verificarSolicitudExistente(request.estudianteId, curso.id!!)
-                if (existe) return@post call.respond(HttpStatusCode.Conflict, "Ya existe una solicitud para este curso")
+                    val curso = repo.buscarCursoPorCodigo(request.codigoCurso)
+                        ?: return@post call.respond(
+                            HttpStatusCode.NotFound,
+                            mapOf("error" to "Código de curso inválido")
+                        )
 
-                val solicitud = SolicitudCurso(
-                    cursoId = curso.id,
-                    codigoCurso = curso.codigo,
-                    estudianteId = request.estudianteId,
-                    estudianteNombre = request.estudianteNombre,
-                    estudianteEmail = request.estudianteEmail,
-                    fechaSolicitud = System.currentTimeMillis().toString(),
-                    mensaje = request.mensaje
-                )
-                val id = repo.crearSolicitud(solicitud)
-                call.respond(mapOf("message" to "Solicitud enviada", "id" to id))
-            }
+                    val existe = repo.verificarSolicitudExistente(request.estudianteId, curso.id!!)
+                    if (existe) {
+                        return@post call.respond(
+                            HttpStatusCode.Conflict,
+                            mapOf("error" to "Ya existe una solicitud para este curso")
+                        )
+                    }
 
-            //  Ver solicitudes pendientes del docente
-            get("/docente/{docenteId}") {
-                val docenteId = call.parameters["docenteId"]
-                    ?: return@get call.respond(HttpStatusCode.BadRequest)
-                val solicitudes = repo.obtenerSolicitudesPendientesPorDocente(docenteId)
-                call.respond(solicitudes)
-            }
+                    val solicitud = SolicitudCurso(
+                        cursoId = curso.id,
+                        codigoCurso = curso.codigo,
+                        estudianteId = request.estudianteId,
+                        estudianteNombre = request.estudianteNombre,
+                        estudianteEmail = request.estudianteEmail,
+                        fechaSolicitud = System.currentTimeMillis().toString(),
+                        mensaje = request.mensaje
+                    )
 
-            //  Ver solicitudes del estudiante
-            get("/estudiante/{estudianteId}") {
-                val estudianteId = call.parameters["estudianteId"]
-                    ?: return@get call.respond(HttpStatusCode.BadRequest)
-                val solicitudes = repo.obtenerSolicitudesPorEstudiante(estudianteId)
-                call.respond(solicitudes)
-            }
-
-            //  Profesor responde (aceptar o rechazar)
-            post("/responder/{solicitudId}") {
-                val solicitudId = call.parameters["solicitudId"]
-                    ?: return@post call.respond(HttpStatusCode.BadRequest)
-                val request = call.receive<RespuestaSolicitudRequest>()
-                val solicitud = repo.obtenerSolicitudPorId(solicitudId)
-                    ?: return@post call.respond(HttpStatusCode.NotFound)
-
-                if (request.aceptar) {
-                    repo.actualizarEstadoSolicitud(solicitudId, EstadoSolicitud.ACEPTADA, request.mensaje)
-                    repo.agregarEstudianteACurso(solicitud.cursoId, solicitud.estudianteId)
-                    call.respond(mapOf("message" to "Solicitud aceptada y estudiante agregado"))
-                } else {
-                    repo.actualizarEstadoSolicitud(solicitudId, EstadoSolicitud.RECHAZADA, request.mensaje)
-                    call.respond(mapOf("message" to "Solicitud rechazada"))
+                    val id = repo.crearSolicitud(solicitud)
+                    call.respond(
+                        HttpStatusCode.Created,
+                        mapOf("message" to "Solicitud enviada", "id" to id)
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al crear la solicitud: ${e.message}")
+                    )
                 }
             }
 
-            //  Ver detalle de una solicitud
-            get("/{solicitudId}") {
-                val solicitudId = call.parameters["solicitudId"]
-                    ?: return@get call.respond(HttpStatusCode.BadRequest)
-                val solicitud = repo.obtenerSolicitudPorId(solicitudId)
-                if (solicitud == null)
-                    call.respond(HttpStatusCode.NotFound, "Solicitud no encontrada")
-                else
-                    call.respond(solicitud)
+            // Ver solicitudes pendientes del docente
+            get("/docente/{docenteId}") {
+                val docenteId = call.parameters["docenteId"]
+                    ?: return@get call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "Falta el ID del docente")
+                    )
+                try {
+                    val solicitudes = repo.obtenerSolicitudesPendientesPorDocente(docenteId)
+                    if (solicitudes.isEmpty()) {
+                        call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No hay solicitudes pendientes"))
+                    } else {
+                        call.respond(HttpStatusCode.OK, solicitudes)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener solicitudes: ${e.message}")
+                    )
+                }
             }
 
-            // Obtener correos de estudiantes por curso
-           get("/curso/{id}/estudiantes") {
-        val cursoId = call.parameters["id"]
+            // Ver solicitudes del estudiante
+            get("/estudiante/{estudianteId}") {
+                val estudianteId = call.parameters["estudianteId"]
+                    ?: return@get call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "Falta el ID del estudiante")
+                    )
+                try {
+                    val solicitudes = repo.obtenerSolicitudesPorEstudiante(estudianteId)
+                    if (solicitudes.isEmpty()) {
+                        call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No hay solicitudes registradas"))
+                    } else {
+                        call.respond(HttpStatusCode.OK, solicitudes)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener solicitudes: ${e.message}")
+                    )
+                }
+            }
 
-        if (cursoId == null) {
-            call.respond(HttpStatusCode.BadRequest, "Falta el ID del curso")
-            return@get
-        }
+            // Profesor responde (aceptar o rechazar)
+            post("/responder/{solicitudId}") {
+                val solicitudId = call.parameters["solicitudId"]
+                    ?: return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "Falta el ID de la solicitud")
+                    )
 
-        try {
-            val correos = solicitudCursoRepository.obtenerCorreosEstudiantesPorCurso(cursoId)
-            call.respond(correos)
-        } catch (e: Exception) {
-            e.printStackTrace()
-            call.respond(HttpStatusCode.InternalServerError, "Error al obtener los correos: ${e.message}")
+                try {
+                    val request = call.receive<RespuestaSolicitudRequest>()
+                    val solicitud = repo.obtenerSolicitudPorId(solicitudId)
+                        ?: return@post call.respond(
+                            HttpStatusCode.NotFound,
+                            mapOf("error" to "Solicitud no encontrada")
+                        )
+
+                    if (request.aceptar) {
+                        // Cambiar estado y agregar estudiante con sus datos al curso
+                        repo.actualizarEstadoSolicitud(solicitudId, EstadoSolicitud.ACEPTADA, request.mensaje)
+                        repo.agregarEstudianteACurso(
+                            solicitud.cursoId,
+                            solicitud.estudianteId,
+                            solicitud.estudianteNombre,
+                            solicitud.estudianteEmail
+                        )
+
+                        call.respond(
+                            HttpStatusCode.OK,
+                            mapOf("message" to "Solicitud aceptada y estudiante agregado al curso")
+                        )
+                    } else {
+                        repo.actualizarEstadoSolicitud(solicitudId, EstadoSolicitud.RECHAZADA, request.mensaje)
+                        call.respond(HttpStatusCode.OK, mapOf("message" to "Solicitud rechazada"))
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al procesar la solicitud: ${e.message}")
+                    )
+                }
+            }
+
+            // Ver detalle de una solicitud
+            get("/{solicitudId}") {
+                val solicitudId = call.parameters["solicitudId"]
+                    ?: return@get call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "Falta el ID de la solicitud")
+                    )
+                try {
+                    val solicitud = repo.obtenerSolicitudPorId(solicitudId)
+                    if (solicitud == null) {
+                        call.respond(HttpStatusCode.NotFound, mapOf("error" to "Solicitud no encontrada"))
+                    } else {
+                        call.respond(HttpStatusCode.OK, solicitud)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener solicitud: ${e.message}")
+                    )
+                }
+            }
+
+            // Obtener estudiantes de un curso
+            get("/curso/{id}/estudiantes") {
+                val cursoId = call.parameters["id"]
+                    ?: return@get call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "Falta el ID del curso")
+                    )
+
+                try {
+                    val cursoRepo = com.eduracha.repository.CursoRepository()
+                    val estudiantes = cursoRepo.obtenerEstudiantesPorCurso(cursoId)
+
+                    if (estudiantes.isEmpty()) {
+                        call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No hay estudiantes en este curso"))
+                    } else {
+                        call.respond(HttpStatusCode.OK, estudiantes)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener estudiantes: ${e.message}")
+                    )
+                }
+            }
         }
     }
 }
-        }
-    }
-

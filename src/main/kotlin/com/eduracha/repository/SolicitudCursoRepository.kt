@@ -10,9 +10,8 @@ class SolicitudCursoRepository {
     private val db = FirebaseDatabase.getInstance()
     private val refSolicitudes = db.getReference("solicitudes")
     private val refCursos = db.getReference("cursos")
-    
 
-    //  Buscar curso por código
+    // Buscar curso por código
     suspend fun buscarCursoPorCodigo(codigo: String): Curso? = suspendCancellableCoroutine { cont ->
         refCursos.orderByChild("codigo").equalTo(codigo)
             .addListenerForSingleValueEvent(object : ValueEventListener {
@@ -27,7 +26,7 @@ class SolicitudCursoRepository {
             })
     }
 
-    //  Verificar si ya existe una solicitud
+    // Verificar si ya existe una solicitud
     suspend fun verificarSolicitudExistente(estudianteId: String, cursoId: String): Boolean =
         suspendCancellableCoroutine { cont ->
             refSolicitudes.orderByChild("estudianteId").equalTo(estudianteId)
@@ -46,7 +45,7 @@ class SolicitudCursoRepository {
                 })
         }
 
-    // Crear solicitud 
+    // Crear solicitud
     suspend fun crearSolicitud(solicitud: SolicitudCurso): String = suspendCancellableCoroutine { cont ->
         val nuevaRef = refSolicitudes.push()
         val id = nuevaRef.key ?: return@suspendCancellableCoroutine cont.resumeWithException(
@@ -59,18 +58,77 @@ class SolicitudCursoRepository {
         }
     }
 
-    //  Solicitudes pendientes
+    // Actualizar estado
+    suspend fun actualizarEstadoSolicitud(id: String, estado: EstadoSolicitud, mensaje: String?) =
+        suspendCancellableCoroutine<Unit> { cont ->
+            val updates = mapOf(
+                "estado" to estado.name,
+                "fechaRespuesta" to System.currentTimeMillis().toString(),
+                "mensaje" to mensaje
+            )
+
+            refSolicitudes.child(id).updateChildren(updates) { error, _ ->
+                if (error != null) cont.resumeWithException(error.toException())
+                else cont.resume(Unit)
+            }
+        }
+
+    // Agregar estudiante con sus datos al curso
+    suspend fun agregarEstudianteACurso(
+        cursoId: String,
+        estudianteId: String,
+        nombre: String,
+        email: String
+    ) = suspendCancellableCoroutine<Unit> { cont ->
+        val refEstudiante = refCursos.child(cursoId).child("estudiantes").child(estudianteId)
+
+        val data = mapOf(
+            "id" to estudianteId,
+            "nombre" to nombre,
+            "email" to email
+        )
+
+        refEstudiante.setValue(data) { error, _ ->
+            if (error != null) cont.resumeWithException(error.toException())
+            else cont.resume(Unit)
+        }
+    }
+
+    // Obtener solicitud por ID
+    suspend fun obtenerSolicitudPorId(id: String): SolicitudCurso? = suspendCancellableCoroutine { cont ->
+        refSolicitudes.child(id)
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    cont.resume(snapshot.getValue(SolicitudCurso::class.java))
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    cont.resumeWithException(error.toException())
+                }
+            })
+    }
+
+    // Solicitudes pendientes por docente
     suspend fun obtenerSolicitudesPendientesPorDocente(docenteId: String): List<SolicitudCurso> =
         suspendCancellableCoroutine { cont ->
             refSolicitudes.orderByChild("estado").equalTo(EstadoSolicitud.PENDIENTE.name)
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
-                        val lista = snapshot.children.mapNotNull {
-                            it.getValue(SolicitudCurso::class.java)
-                        }.filter { solicitud ->
-                            solicitud.cursoId.isNotEmpty()
-                        }
-                        cont.resume(lista)
+                        val solicitudes = snapshot.children.mapNotNull { it.getValue(SolicitudCurso::class.java) }
+                        refCursos.addListenerForSingleValueEvent(object : ValueEventListener {
+                            override fun onDataChange(cursosSnap: DataSnapshot) {
+                                val cursosDocente = cursosSnap.children.filter {
+                                    it.child("docenteId").getValue(String::class.java) == docenteId
+                                }.mapNotNull { it.key }
+
+                                val filtradas = solicitudes.filter { it.cursoId in cursosDocente }
+                                cont.resume(filtradas)
+                            }
+
+                            override fun onCancelled(error: DatabaseError) {
+                                cont.resumeWithException(error.toException())
+                            }
+                        })
                     }
 
                     override fun onCancelled(error: DatabaseError) {
@@ -79,7 +137,7 @@ class SolicitudCursoRepository {
                 })
         }
 
-    //  Solicitudes por estudiante
+    // Solicitudes por estudiante
     suspend fun obtenerSolicitudesPorEstudiante(estudianteId: String): List<SolicitudCurso> =
         suspendCancellableCoroutine { cont ->
             refSolicitudes.orderByChild("estudianteId").equalTo(estudianteId)
@@ -96,85 +154,4 @@ class SolicitudCursoRepository {
                     }
                 })
         }
-
-    //  Actualizar estado
-    suspend fun actualizarEstadoSolicitud(id: String, estado: EstadoSolicitud, mensaje: String?) =
-        suspendCancellableCoroutine<Unit> { cont ->
-            val updates = mapOf(
-                "estado" to estado.name,
-                "fechaRespuesta" to System.currentTimeMillis().toString(),
-                "mensaje" to mensaje
-            )
-
-            refSolicitudes.child(id).updateChildren(updates) { error, _ ->
-                if (error != null) cont.resumeWithException(error.toException())
-                else cont.resume(Unit)
-            }
-        }
-
-    //  Agregar estudiante al curso
-    suspend fun agregarEstudianteACurso(cursoId: String, estudianteId: String) =
-        suspendCancellableCoroutine<Unit> { cont ->
-            val refEstudiantes = refCursos.child(cursoId).child("estudiantes")
-            val nuevoRef = refEstudiantes.push()
-
-            nuevoRef.setValue(estudianteId) { error, _ ->
-                if (error != null) cont.resumeWithException(error.toException())
-                else cont.resume(Unit)
-            }
-        }
-
-    //  Obtener una solicitud por ID
-    suspend fun obtenerSolicitudPorId(id: String): SolicitudCurso? = suspendCancellableCoroutine { cont ->
-        refSolicitudes.child(id).addListenerForSingleValueEvent(object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                cont.resume(snapshot.getValue(SolicitudCurso::class.java))
-            }
-
-            override fun onCancelled(error: DatabaseError) {
-                cont.resumeWithException(error.toException())
-            }
-        })
-    }
-suspend fun obtenerCorreosEstudiantesPorCurso(cursoId: String): List<String> =
-    suspendCancellableCoroutine { cont ->
-        val refEstudiantes = refCursos.child(cursoId).child("estudiantes")
-        val refUsuarios = db.getReference("usuarios")
-
-        // Leer los IDs de los estudiantes inscritos en el curso
-        refEstudiantes.addListenerForSingleValueEvent(object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                val ids = snapshot.children.mapNotNull { it.getValue(String::class.java) }
-
-                if (ids.isEmpty()) {
-                    cont.resume(emptyList())
-                    return
-                }
-
-                // Leer todos los usuarios y cruzar con los IDs de estudiantes
-                refUsuarios.addListenerForSingleValueEvent(object : ValueEventListener {
-                    override fun onDataChange(usuariosSnap: DataSnapshot) {
-                        val correos = usuariosSnap.children.mapNotNull { userSnap ->
-                            val userId = userSnap.key
-                            val correo = userSnap.child("correo").getValue(String::class.java)
-                            if (userId != null && ids.contains(userId)) {
-                                correo
-                            } else {
-                                null
-                            }
-                        }
-                        cont.resume(correos)
-                    }
-
-                    override fun onCancelled(error: DatabaseError) {
-                        cont.resumeWithException(error.toException())
-                    }
-                })
-            }
-
-            override fun onCancelled(error: DatabaseError) {
-                cont.resumeWithException(error.toException())
-            }
-        })
-    }
 }

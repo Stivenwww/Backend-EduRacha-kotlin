@@ -10,7 +10,6 @@ class CursoRepository {
     private val database = FirebaseDatabase.getInstance()
     private val ref = database.getReference("cursos")
 
-    // Crear curso
     suspend fun crearCurso(curso: Curso): String {
         val nuevoRef = ref.push()
         val id = nuevoRef.key ?: throw Exception("No se pudo generar ID")
@@ -19,7 +18,6 @@ class CursoRepository {
         return id
     }
 
-    // Obtener todos los cursos
     suspend fun obtenerCursos(): List<Curso> = suspendCancellableCoroutine { cont ->
         ref.addListenerForSingleValueEvent(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
@@ -33,7 +31,6 @@ class CursoRepository {
         })
     }
 
-    // Obtener un curso por ID
     suspend fun obtenerCursoPorId(id: String): Curso? = suspendCancellableCoroutine { cont ->
         ref.child(id).addListenerForSingleValueEvent(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
@@ -46,13 +43,34 @@ class CursoRepository {
         })
     }
 
-    // Actualizar curso
     suspend fun actualizarCurso(id: String, curso: Curso) {
         ref.child(id).setValueAsync(curso.copy(id = id)).get()
     }
 
-    // Eliminar curso
     suspend fun eliminarCurso(id: String) {
         ref.child(id).removeValueAsync().get()
     }
+
+    // Obtener todos los estudiantes de un curso (con su info completa)
+    suspend fun obtenerEstudiantesPorCurso(cursoId: String): List<Map<String, Any?>> =
+        suspendCancellableCoroutine { cont ->
+            val refEstudiantes = database.getReference("cursos/$cursoId/estudiantes")
+
+            refEstudiantes.addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    if (!snapshot.exists()) {
+                        cont.resume(emptyList())
+                        return
+                    }
+
+                    val estudiantes = snapshot.children.mapNotNull { it.value as? Map<String, Any?> }
+                    cont.resume(estudiantes)
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    cont.resumeWithException(error.toException())
+                }
+            })
+        }
 }
+                
