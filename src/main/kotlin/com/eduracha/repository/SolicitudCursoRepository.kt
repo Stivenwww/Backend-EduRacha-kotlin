@@ -7,6 +7,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 class SolicitudCursoRepository {
+
     private val db = FirebaseDatabase.getInstance()
     private val refSolicitudes = db.getReference("solicitudes")
     private val refCursos = db.getReference("cursos")
@@ -89,8 +90,22 @@ class SolicitudCursoRepository {
         )
 
         refEstudiante.setValue(data) { error, _ ->
-            if (error != null) cont.resumeWithException(error.toException())
-            else cont.resume(Unit)
+            if (error != null) {
+                cont.resumeWithException(error.toException())
+            } else {
+                // Inicializar progreso y racha del estudiante en el curso
+                try {
+                    com.eduracha.services.ServicioProgreso.inicializarDatosEstudiante(
+                        estudianteId = estudianteId,
+                        cursoId = cursoId,
+                        nombre = nombre,
+                        email = email
+                    )
+                } catch (e: Exception) {
+                    println("Error inicializando progreso del estudiante: ${e.message}")
+                }
+                cont.resume(Unit)
+            }
         }
     }
 
