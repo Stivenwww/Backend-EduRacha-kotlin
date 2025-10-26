@@ -169,4 +169,31 @@ class SolicitudCursoRepository {
                     }
                 })
         }
+
+        // Cambiar estado del estudiante dentro del curso
+suspend fun cambiarEstadoEstudiante(
+    cursoId: String,
+    estudianteId: String,
+    nuevoEstado: String
+) = suspendCancellableCoroutine<Unit> { cont ->
+
+    val ref = refCursos.child(cursoId).child("estudiantes").child(estudianteId)
+
+    if (nuevoEstado == "eliminado") {
+        ref.removeValue { error, _ ->
+            if (error != null) cont.resumeWithException(error.toException())
+            else cont.resume(Unit)
+        }
+    } else {
+        val updates = mapOf(
+            "estado" to nuevoEstado
+        )
+
+        ref.updateChildren(updates) { error, _ ->
+            if (error != null) cont.resumeWithException(error.toException())
+            else cont.resume(Unit)
+        }
+    }
+}
+
 }

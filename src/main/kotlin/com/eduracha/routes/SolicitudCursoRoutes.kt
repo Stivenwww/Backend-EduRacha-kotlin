@@ -195,6 +195,36 @@ fun Application.solicitudCursoRoutes() {
                     )
                 }
             }
+            // Cambiar estado de estudiante en curso
+post("/curso/{cursoId}/estudiante/{estudianteId}/estado") {
+    val cursoId = call.parameters["cursoId"]
+        ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
+
+    val estudianteId = call.parameters["estudianteId"]
+        ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del estudiante"))
+
+    val request = call.receive<Map<String, String>>()
+    val nuevoEstado = request["estado"] ?: return@post call.respond(
+        HttpStatusCode.BadRequest,
+        mapOf("error" to "Falta el campo 'estado'")
+    )
+
+    if (nuevoEstado !in listOf("activo", "inactivo", "eliminado")) {
+        return@post call.respond(
+            HttpStatusCode.BadRequest,
+            mapOf("error" to "Estado inválido. Use: activo | inactivo | eliminado")
+        )
+    }
+
+    try {
+        repo.cambiarEstadoEstudiante(cursoId, estudianteId, nuevoEstado)
+        call.respond(HttpStatusCode.OK, mapOf("mensaje" to "Estado actualizado a $nuevoEstado"))
+    } catch (e: Exception) {
+        e.printStackTrace()
+        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+    }
+}
+
         }
     }
 }

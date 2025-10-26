@@ -2,6 +2,7 @@ package com.eduracha.routes
 
 import com.eduracha.models.Pregunta
 import com.eduracha.repository.PreguntaRepository
+import com.eduracha.repository.ExplicacionRepository
 import com.eduracha.services.OpenAIService
 import io.ktor.server.application.*
 import io.ktor.server.response.*
@@ -22,6 +23,7 @@ data class PreguntasIAResponse(
 
 fun Application.preguntasRoutes() {
     val repo = PreguntaRepository()
+    val explicacionRepo = ExplicacionRepository()
 
     routing {
 
@@ -65,6 +67,25 @@ fun Application.preguntasRoutes() {
             post {
                 try {
                     val pregunta = call.receive<Pregunta>()
+                    
+                    // VALIDACIÓN: Verificar que existe explicación aprobada para el tema
+                    if (!pregunta.temaId.isNullOrBlank() && !pregunta.cursoId.isNullOrBlank()) {
+                        val tieneExplicacion = explicacionRepo.tieneExplicacionAprobada(
+                            pregunta.cursoId, 
+                            pregunta.temaId
+                        )
+                        
+                        if (!tieneExplicacion) {
+                            return@post call.respond(
+                                HttpStatusCode.PreconditionFailed,
+                                mapOf(
+                                    "error" to "No se puede crear la pregunta. El tema no tiene una explicación aprobada.",
+                                    "mensaje" to "Primero debe generar y aprobar una explicación para este tema."
+                                )
+                            )
+                        }
+                    }
+                    
                     val id = repo.crearPregunta(pregunta)
                     call.respond(
                         HttpStatusCode.Created,
@@ -116,7 +137,6 @@ fun Application.preguntasRoutes() {
             }
 
             // DELETE /api/preguntas/cache
-            // Limpia la caché de Firebase
             delete("/cache") {
                 repo.limpiarCacheFirebase()
                 call.respond(mapOf("message" to "Caché de Firebase limpiada"))
@@ -138,6 +158,20 @@ fun Application.preguntasRoutes() {
                     val temaId = data["temaId"] ?: return@post call.respond(HttpStatusCode.BadRequest, "Falta temaId")
                     val temaTexto = data["temaTexto"] ?: return@post call.respond(HttpStatusCode.BadRequest, "Falta temaTexto")
                     val cantidad = data["cantidad"]?.toIntOrNull() ?: 5
+
+                    // VALIDACIÓN CRÍTICA: Verificar que existe explicación aprobada
+                    val tieneExplicacion = explicacionRepo.tieneExplicacionAprobada(cursoId, temaId)
+                    
+                    if (!tieneExplicacion) {
+                        return@post call.respond(
+                            HttpStatusCode.PreconditionFailed,
+                            mapOf(
+                                "error" to "No se pueden generar preguntas. El tema no tiene una explicación aprobada.",
+                                "mensaje" to "FLUJO REQUERIDO: 1) Generar explicación, 2) Validar explicación, 3) Generar preguntas",
+                                "accionRequerida" to "Generar y aprobar explicación del tema"
+                            )
+                        )
+                    }
 
                     val preguntas = iaService.generarYGuardarPreguntas(cursoId, temaId, temaTexto, cantidad)
 
