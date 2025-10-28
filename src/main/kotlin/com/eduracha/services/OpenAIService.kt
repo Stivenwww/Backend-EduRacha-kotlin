@@ -14,7 +14,8 @@ import java.util.UUID
 data class PreguntaAI(
     val texto: String,
     val opciones: List<OpcionAI>,
-    val dificultad: String? = "medio",
+    val dificultad: String? = null,
+    val explicacionCorrecta: String? = null,
     val metadatosIA: MetadatosIAAI? = null
 )
 
@@ -138,6 +139,7 @@ class OpenAIService(private val client: HttpClient, private val openAiApiKey: St
     - Cada pregunta debe tener una dificultad y SOLO puede ser: "facil", "medio" o "dificil".
     - Alterna las dificultades en las preguntas (no las pongas todas iguales).
     - No incluyas texto adicional, explicaciones ni markdown.
+    - El campo "explicacionCorrecta" debe explicar brevemente por qué la respuesta correcta lo es.
      
          FORMATO DE RESPUESTA:: 
             {
@@ -150,6 +152,7 @@ class OpenAIService(private val client: HttpClient, private val openAiApiKey: St
                     {"id": 3, "texto": "Una proteína", "esCorrecta": false}
                   ],
                   "dificultad": "medio",
+                  "explicacionCorrecta": "La fotosíntesis es el proceso mediante el cual las plantas producen energía a partir de la luz solar.",
                   "metadatosIA": {
                     "generadoPor": "openai",
                     "instruccion": "Generar preguntas sobre el tema X"
@@ -235,7 +238,8 @@ class OpenAIService(private val client: HttpClient, private val openAiApiKey: St
                     metadatosIA = com.eduracha.models.MetadatosIA(
                         generadoPor = ai.metadatosIA?.generadoPor,
                         instruccion = ai.metadatosIA?.instruccion
-                    )
+                    ),
+                    explicacionCorrecta = ai.explicacionCorrecta
                 )
 
                 newRef.setValueAsync(pregunta).get()

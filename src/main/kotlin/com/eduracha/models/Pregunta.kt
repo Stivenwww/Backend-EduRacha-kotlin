@@ -18,7 +18,9 @@ data class Pregunta(
     val revisadoPor: String? = null,
     val fechaRevision: String? = null,
     val notasRevision: String? = null,
-    val modificada: Boolean = false
+    val modificada: Boolean = false,
+    val explicacionCorrecta: String? = null // Texto explicativo de por qué la respuesta es la correcta
+
 )
 
 @Serializable

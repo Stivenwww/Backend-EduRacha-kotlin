@@ -11,7 +11,7 @@ class PreguntaRepository {
     private val database = FirebaseDatabase.getInstance()
     private val ref = database.getReference("preguntas")
 
-    // Crear una nueva pregunta en la base de datos con estado "pendiente"  ya sea ia o docente 
+    // Crear una nueva pregunta
     suspend fun crearPregunta(pregunta: Pregunta): String =
         suspendCancellableCoroutine { cont ->
             val nuevoRef = ref.push()
@@ -21,7 +21,8 @@ class PreguntaRepository {
 
             val nuevaPregunta = pregunta.copy(
                 id = id,
-                estado = "pendiente"
+                estado = if (pregunta.estado.isNotEmpty()) pregunta.estado else "pendiente_revision",
+                explicacionCorrecta = pregunta.explicacionCorrecta ?: ""
             )
 
             nuevoRef.setValue(nuevaPregunta, DatabaseReference.CompletionListener { error, _ ->
@@ -82,7 +83,7 @@ class PreguntaRepository {
             })
         }
 
-    // Actualizar toda la pregunta
+      // Actualizar toda la pregunta
     suspend fun actualizarPregunta(id: String, pregunta: Pregunta) =
         suspendCancellableCoroutine<Unit> { cont ->
             ref.child(id).setValue(pregunta.copy(id = id), DatabaseReference.CompletionListener { error, _ ->
@@ -90,6 +91,7 @@ class PreguntaRepository {
                 else cont.resume(Unit)
             })
         }
+
 
     // Actualizar solo el estado de la pregunta
     suspend fun actualizarEstadoPregunta(id: String, nuevoEstado: String, notas: String? = null) =
@@ -118,3 +120,4 @@ class PreguntaRepository {
         ref.keepSynced(false)
     }
 }
+
