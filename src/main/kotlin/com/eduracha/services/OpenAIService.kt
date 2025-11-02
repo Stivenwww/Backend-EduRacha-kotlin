@@ -47,14 +47,14 @@ class OpenAIService(private val client: HttpClient, private val openAiApiKey: St
 
     private val json = Json { ignoreUnknownKeys = true }
 
-   
     // GENERAR EXPLICACIONES
-    
     suspend fun generarExplicacion(
+        cursoId: String,
+        temaId: String,
         tituloTema: String,
         contenidoTema: String?
     ): String {
-        
+
         val systemPrompt = """
             Eres un profesor experto en pedagogía. Tu tarea es crear explicaciones claras, 
             estructuradas y didácticas sobre temas educativos.
@@ -115,7 +115,28 @@ class OpenAIService(private val client: HttpClient, private val openAiApiKey: St
                 ?.jsonPrimitive?.content
                 ?: throw IllegalStateException("No se encontró contenido en la respuesta de OpenAI")
 
-            content.trim()
+            val explicacion = content.trim()
+
+            // Guardar la explicación en Firebase bajo el nodo "explicaciones"
+            val refBase = FirebaseDatabase.getInstance()
+                .getReference("explicaciones")
+                .child(cursoId)
+                .child(temaId)
+
+            val data = mapOf(
+                "cursoId" to cursoId,
+                "temaId" to temaId,
+                "titulo" to tituloTema,
+                "explicacion" to explicacion,
+                "fuente" to "ia",
+                "creadoPor" to "openai",
+                "fechaCreacion" to Instant.now().toString()
+            )
+
+            refBase.setValueAsync(data).get()
+
+            explicacion
+
         } catch (e: Exception) {
             println("Error al interpretar la respuesta de OpenAI para explicación: ${e.message}")
             println("Respuesta cruda:\n$respText")
@@ -208,7 +229,6 @@ class OpenAIService(private val client: HttpClient, private val openAiApiKey: St
                 json.decodeFromJsonElement<PreguntaAI>(it)
             }
 
-            // Guardar en Firebase directamente en el nodo "preguntas"
             val refBase = FirebaseDatabase.getInstance()
                 .getReference("preguntas")
 

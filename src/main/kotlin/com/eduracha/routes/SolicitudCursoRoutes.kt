@@ -8,6 +8,7 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.coroutines.*
+import com.eduracha.services.ServicioProgreso
 
 fun Application.solicitudCursoRoutes() {
     val repo = SolicitudCursoRepository()
@@ -224,6 +225,43 @@ post("/curso/{cursoId}/estudiante/{estudianteId}/estado") {
         call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
     }
 }
+ // Falta por probar 
+
+// Obtener racha del estudiante en el curso numero de días consecutivos de actividad
+get("/curso/{cursoId}/estudiante/{estudianteId}/racha") {
+    val cursoId = call.parameters["cursoId"]
+        ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
+
+    val estudianteId = call.parameters["estudianteId"]
+        ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del estudiante"))
+
+    try {
+        val data = ServicioProgreso.obtenerRacha(cursoId, estudianteId)
+        if (data != null)
+            call.respond(HttpStatusCode.OK, data)
+        else
+            call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No se encontró racha"))
+    } catch (e: Exception) {
+        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+    }
+}
+
+// Actualizar racha del estudiante en el curso 
+post("/curso/{cursoId}/estudiante/{estudianteId}/actualizarRacha") {
+    val cursoId = call.parameters["cursoId"]
+        ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
+
+    val estudianteId = call.parameters["estudianteId"]
+        ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del estudiante"))
+
+    try {
+        ServicioProgreso.actualizarRacha(cursoId, estudianteId)
+        call.respond(HttpStatusCode.OK, mapOf("mensaje" to "Racha actualizada correctamente"))
+    } catch (e: Exception) {
+        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+    }
+}
+
 
         }
     }

@@ -47,7 +47,7 @@ object ServicioProgreso {
             }
         }
 
-        // ✅ Notificación de bienvenida
+        // Notificación de bienvenida
         val refNotif = db.getReference("notificaciones").child(estudianteId).push()
         val notificacion = mapOf(
             "titulo" to "¡Bienvenido al curso!",
@@ -60,7 +60,7 @@ object ServicioProgreso {
             if (error != null)
                 println("Error al guardar notificación: ${error.message}")
             else
-                println("✅ Notificación de bienvenida enviada a $nombre ($estudianteId)")
+                println("Notificación de bienvenida enviada a $nombre ($estudianteId)")
         }
     }
 
@@ -103,14 +103,14 @@ object ServicioProgreso {
                         if (error != null) {
                             cont.resumeWithException(error.toException())
                         } else {
-                            println("✅ Progreso actualizado para $usuarioId ($tipo completado)")
+                            println(" Progreso actualizado para $usuarioId ($tipo completado)")
 
-                            // ✅ Crear notificación automática solo para quizzes
+                            // Crear notificación automática solo para quizzes
                             if (tipo == "quiz" && completado) {
                                 val refNotif = db.getReference("notificaciones").child(usuarioId).push()
                                 val notif = mapOf(
                                     "titulo" to "¡Quiz completado!",
-                                    "mensaje" to "Has completado un quiz y ganaste 10 puntos 🎯",
+                                    "mensaje" to "Has completado un quiz y ganaste 10 puntos ",
                                     "fecha" to System.currentTimeMillis(),
                                     "leido" to false
                                 )
@@ -118,7 +118,7 @@ object ServicioProgreso {
                                     if (e != null)
                                         println("Error al guardar notificación de quiz: ${e.message}")
                                     else
-                                        println("📨 Notificación de quiz enviada a $usuarioId")
+                                        println("Notificación de quiz enviada a $usuarioId")
                                 }
                             }
 
@@ -141,5 +141,67 @@ object ServicioProgreso {
                 if (error != null) cont.resumeWithException(error.toException())
                 else cont.resume(Unit)
             }
+        }
+
+    // NUEVAS FUNCIONES DE RACHAS
+
+    // Obtener racha de un estudiante
+    suspend fun obtenerRacha(cursoId: String, estudianteId: String): Map<String, Any>? =
+        suspendCancellableCoroutine { cont ->
+            val ref = db.getReference("rachas").child(cursoId).child(estudianteId)
+            ref.addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    if (snapshot.exists()) {
+                        val data = snapshot.value as? Map<String, Any>
+                        cont.resume(data)
+                    } else {
+                        cont.resume(null)
+                    }
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    cont.resumeWithException(error.toException())
+                }
+            })
+        }
+
+    // Actualizar racha del estudiante (por actividad diaria)
+    suspend fun actualizarRacha(cursoId: String, estudianteId: String) =
+        suspendCancellableCoroutine { cont ->
+            val ref = db.getReference("rachas").child(cursoId).child(estudianteId)
+            ref.addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val hoy = System.currentTimeMillis()
+                    val actual = snapshot.value as? Map<String, Any>
+                    val ultimaFecha = (actual?.get("ultimaFecha") as? Number)?.toLong() ?: 0
+                    val diasConsecutivos = (actual?.get("diasConsecutivos") as? Number)?.toInt() ?: 0
+
+                    val diferenciaDias = (hoy - ultimaFecha) / (1000 * 60 * 60 * 24)
+
+                    val nuevoConteo = when {
+                        diferenciaDias == 1L -> diasConsecutivos + 1 // día consecutivo
+                        diferenciaDias > 1L -> 1 // reinicia la racha
+                        else -> diasConsecutivos // mismo día, no cambia
+                    }
+
+                    val nuevaRacha = mapOf(
+                        "diasConsecutivos" to nuevoConteo,
+                        "ultimaFecha" to hoy
+                    )
+
+                    ref.setValue(nuevaRacha) { error, _ ->
+                        if (error != null) {
+                            cont.resumeWithException(error.toException())
+                        } else {
+                            println(" Racha actualizada para $estudianteId en $cursoId: $nuevoConteo días consecutivos")
+                            cont.resume(Unit)
+                        }
+                    }
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    cont.resumeWithException(error.toException())
+                }
+            })
         }
 }

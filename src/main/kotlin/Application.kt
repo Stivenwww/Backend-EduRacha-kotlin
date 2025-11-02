@@ -17,6 +17,11 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import com.eduracha.repository.PreguntaRepository  
 import com.eduracha.routes.preguntasRoutes
+import com.eduracha.repository.QuizRepository
+import com.eduracha.services.QuizService
+import com.eduracha.routes.quizRoutes
+
+
 
 
 fun main() {
@@ -45,24 +50,29 @@ fun Application.module() {
 
     val database = FirebaseDatabase.getInstance(firebaseUrl)
 
+   
+// Pasamos 'database' al repositorio (Realtime Database)
+
+val preguntaRepo = PreguntaRepository()
+val quizRepo = QuizRepository()
+val quizService = QuizService(quizRepo, preguntaRepo)
 
     install(ContentNegotiation) {
         json()
     }
-
     routing {
         get("/") {
-            call.respondText("Servidor EduRacha conectado correctamente al Realtime Database")
+            call.respondText("Servidor EduRacha corriendo correctamente y conectado a Firestore")
         }
 
+        // Rutas principales del proyecto
         authRoutes()
         usuarioRoutes()
         cursoRoutes()
         solicitudCursoRoutes()
         chatRoutes()
         preguntasRoutes()
-       
+        quizRoutes()
 
-       
     }
 }

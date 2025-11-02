@@ -121,16 +121,15 @@ fun Application.cursoRoutes() {
                     mapOf("error" to "Falta ID del curso")
                 )
 
-                // Filtro opcional por estado de explicación
                 val estado = call.request.queryParameters["estado"]
 
                 try {
                     val temas = if (!estado.isNullOrBlank()) {
                         explicacionRepo.obtenerTemasPorEstadoExplicacion(cursoId, estado)
                     } else {
-                        repo.obtenerTemasPorCurso(cursoId)
+                        explicacionRepo.obtenerTemasFiltrandoExplicacion(cursoId)
                     }
-                    
+
                     call.respond(HttpStatusCode.OK, temas)
                 } catch (e: Exception) {
                     call.respond(
@@ -240,11 +239,14 @@ fun Application.cursoRoutes() {
                         // 1. Crear el tema primero
                         val temaId = repo.agregarTema(cursoId, request.tema)
 
-                        // 2. Generar explicación con IA
+                       // 2. Generar explicación con IA (pasando cursoId y temaId)
                         val explicacionGenerada = iaService.generarExplicacion(
+                            cursoId = cursoId,
+                            temaId = temaId,
                             tituloTema = request.tema.titulo,
                             contenidoTema = request.tema.contenido
-                        )
+                    )
+
 
                         // 3. Actualizar el tema con la explicación generada (estado: pendiente)
                         explicacionRepo.actualizarExplicacion(
@@ -347,126 +349,78 @@ fun Application.cursoRoutes() {
 
            
             // GESTIÓN DE EXPLICACIONES DE TEMASS
+// POST /api/cursos/{id}/temas/{temaId}/generar-explicacion
+// Generar explicación con IA para un tema existente
+post("{id}/temas/{temaId}/generar-explicacion") {
+    val cursoId = call.parameters["id"] ?: return@post call.respond(
+        HttpStatusCode.BadRequest,
+        mapOf("error" to "Falta ID del curso")
+    )
+    val temaId = call.parameters["temaId"] ?: return@post call.respond(
+        HttpStatusCode.BadRequest,
+        mapOf("error" to "Falta ID del tema")
+    )
 
-            // POST /api/cursos/{id}/temas/{temaId}/generar-explicacion
-            // Generar explicación con IA para un tema existente
-            post("{id}/temas/{temaId}/generar-explicacion") {
-                val cursoId = call.parameters["id"] ?: return@post call.respond(
-                    HttpStatusCode.BadRequest,
-                    mapOf("error" to "Falta ID del curso")
-                )
-                val temaId = call.parameters["temaId"] ?: return@post call.respond(
-                    HttpStatusCode.BadRequest,
-                    mapOf("error" to "Falta ID del tema")
-                )
+    try {
+        if (iaService == null) {
+            return@post call.respond(
+                HttpStatusCode.ServiceUnavailable,
+                mapOf("error" to "Servicio de IA no disponible. Verifica tu OPENAI_API_KEY en .env")
+            )
+        }
 
-                try {
-                    if (iaService == null) {
-                        return@post call.respond(
-                            HttpStatusCode.ServiceUnavailable,
-                            mapOf("error" to "Servicio de IA no disponible")
-                        )
-                    }
+        // Obtener el tema existente
+        val tema = repo.obtenerTema(cursoId, temaId)
+            ?: return@post call.respond(
+                HttpStatusCode.NotFound,
+                mapOf("error" to "Tema no encontrado")
+            )
 
-                    // Obtener el tema
-                    val tema = repo.obtenerTema(cursoId, temaId)
-                        ?: return@post call.respond(
-                            HttpStatusCode.NotFound,
-                            mapOf("error" to "Tema no encontrado")
-                        )
+        // Intentar leer los datos opcionales enviados
+        val request = try {
+            call.receive<GenerarExplicacionRequest>()
+        } catch (e: Exception) {
+            null
+        }
 
-                    val request = try {
-                        call.receive<GenerarExplicacionRequest>()
-                    } catch (e: Exception) {
-                        null
-                    }
+        // Generar la explicación con IA (pasando cursoId y temaId)
+        val explicacionGenerada = iaService.generarExplicacion(
+            cursoId = cursoId,
+            temaId = temaId,
+            tituloTema = request?.tituloTema ?: tema.titulo,
+            contenidoTema = request?.contenidoTema ?: tema.contenido
+        )
 
-                    // Generar la explicación con IA
-                    val explicacion = iaService.generarExplicacion(
-                        tituloTema = request?.tituloTema ?: tema.titulo,
-                        contenidoTema = request?.contenidoTema ?: tema.contenido
-                    )
+        // Guardar la explicación generada con estado "pendiente"
+        explicacionRepo.actualizarExplicacion(
+            cursoId = cursoId,
+            temaId = temaId,
+            explicacion = explicacionGenerada,
+            fuente = "ia",
+            estado = "pendiente"
+        )
 
-                    // Guardar la explicación generada con estado "pendiente"
-                    explicacionRepo.actualizarExplicacion(
-                        cursoId = cursoId,
-                        temaId = temaId,
-                        explicacion = explicacion,
-                        fuente = "ia",
-                        estado = "pendiente"
-                    )
+        // Obtener el tema actualizado
+        val temaActualizado = repo.obtenerTema(cursoId, temaId)
 
-                    // Obtener el tema actualizado
-                    val temaActualizado = repo.obtenerTema(cursoId, temaId)
+        call.respond(
+            HttpStatusCode.OK,
+            ExplicacionResponse(
+                message = "Explicación generada correctamente con IA. Pendiente de validación.",
+                explicacion = explicacionGenerada,
+                fuente = "ia",
+                tema = temaActualizado!!
+            )
+        )
 
-                    call.respond(
-                        HttpStatusCode.OK,
-                        ExplicacionResponse(
-                            message = "Explicación generada correctamente con IA. Pendiente de validación.",
-                            explicacion = explicacion,
-                            fuente = "ia",
-                            tema = temaActualizado!!
-                        )
-                    )
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    call.respond(
-                        HttpStatusCode.InternalServerError,
-                        mapOf("error" to "Error al generar explicación: ${e.message}")
-                    )
-                }
-            }
-
-            // PUT /api/cursos/{id}/temas/{temaId}/explicacion
-            // Actualizar explicación manualmente (docente)
-            put("{id}/temas/{temaId}/explicacion") {
-                val cursoId = call.parameters["id"] ?: return@put call.respond(
-                    HttpStatusCode.BadRequest,
-                    mapOf("error" to "Falta ID del curso")
-                )
-                val temaId = call.parameters["temaId"] ?: return@put call.respond(
-                    HttpStatusCode.BadRequest,
-                    mapOf("error" to "Falta ID del tema")
-                )
-
-                try {
-                    val request = call.receive<ActualizarExplicacionRequest>()
-
-                    // Verificar que el tema existe
-                    val tema = repo.obtenerTema(cursoId, temaId)
-                        ?: return@put call.respond(
-                            HttpStatusCode.NotFound,
-                            mapOf("error" to "Tema no encontrado")
-                        )
-
-                    // Actualizar con explicación manual (ya aprobada)
-                    explicacionRepo.actualizarExplicacion(
-                        cursoId = cursoId,
-                        temaId = temaId,
-                        explicacion = request.explicacion,
-                        fuente = request.fuente,
-                        estado = "aprobada" // Las explicaciones manuales del docente se aprueban automáticamente
-                    )
-
-                    val temaActualizado = repo.obtenerTema(cursoId, temaId)
-
-                    call.respond(
-                        HttpStatusCode.OK,
-                        ExplicacionResponse(
-                            message = "Explicación actualizada correctamente",
-                            explicacion = request.explicacion,
-                            fuente = request.fuente,
-                            tema = temaActualizado!!
-                        )
-                    )
-                } catch (e: Exception) {
-                    call.respond(
-                        HttpStatusCode.InternalServerError,
-                        mapOf("error" to "Error al actualizar explicación: ${e.message}")
-                    )
-                }
-            }
-
+    } catch (e: Exception) {
+        e.printStackTrace()
+        call.respond(
+            HttpStatusCode.InternalServerError,
+            mapOf("error" to "Error al generar explicación: ${e.message}")
+        )
+    }
+}
             // PUT /api/cursos/{id}/temas/{temaId}/validar-explicacion
             // Validar (aprobar/rechazar) explicación generada por IA
             put("{id}/temas/{temaId}/validar-explicacion") {
