@@ -28,24 +28,32 @@ object ServicioProgreso {
 
         val rachaInicial = mapOf(
             "diasConsecutivos" to 0,
-            "ultimaFecha" to System.currentTimeMillis()
+            "ultimaFecha" to System.currentTimeMillis(),
+            "vidas" to 5,
+            "experiencia" to 0
         )
 
-        refProgreso.setValue(progresoInicial) { error, _ ->
-            if (error != null) {
-                println("Error al crear progreso: ${error.message}")
-            } else {
-                println("Progreso inicializado para $estudianteId en $cursoId")
+        // Guardar progreso inicial
+        refProgreso.setValue(progresoInicial, object : DatabaseReference.CompletionListener {
+            override fun onComplete(error: DatabaseError?, ref: DatabaseReference) {
+                if (error != null) {
+                    println("Error al crear progreso: ${error.message}")
+                } else {
+                    println("Progreso inicializado para $estudianteId en $cursoId")
+                }
             }
-        }
+        })
 
-        refRacha.setValue(rachaInicial) { error, _ ->
-            if (error != null) {
-                println("Error al crear racha: ${error.message}")
-            } else {
-                println("Racha inicializada para $estudianteId en $cursoId")
+        // Guardar racha inicial
+        refRacha.setValue(rachaInicial, object : DatabaseReference.CompletionListener {
+            override fun onComplete(error: DatabaseError?, ref: DatabaseReference) {
+                if (error != null) {
+                    println("Error al crear racha: ${error.message}")
+                } else {
+                    println("Racha inicializada para $estudianteId en $cursoId")
+                }
             }
-        }
+        })
 
         // Notificación de bienvenida
         val refNotif = db.getReference("notificaciones").child(estudianteId).push()
@@ -56,15 +64,17 @@ object ServicioProgreso {
             "leido" to false
         )
 
-        refNotif.setValue(notificacion) { error, _ ->
-            if (error != null)
-                println("Error al guardar notificación: ${error.message}")
-            else
-                println("Notificación de bienvenida enviada a $nombre ($estudianteId)")
-        }
+        refNotif.setValue(notificacion, object : DatabaseReference.CompletionListener {
+            override fun onComplete(error: DatabaseError?, ref: DatabaseReference) {
+                if (error != null)
+                    println("Error al guardar notificación: ${error.message}")
+                else
+                    println("Notificación de bienvenida enviada a $nombre ($estudianteId)")
+            }
+        })
     }
 
-    // Obtener progreso (suspend)
+    // Obtener progreso
     suspend fun obtenerProgreso(usuarioId: String): Progreso? =
         suspendCancellableCoroutine { cont ->
             val ref = db.getReference("progreso").child(usuarioId)
@@ -80,7 +90,7 @@ object ServicioProgreso {
             })
         }
 
-    // Actualizar progreso (por quiz o práctica)
+    // Actualizar progreso
     suspend fun actualizarProgreso(usuarioId: String, tipo: String, completado: Boolean) =
         suspendCancellableCoroutine { cont ->
             val ref = db.getReference("progreso").child(usuarioId)
@@ -99,32 +109,37 @@ object ServicioProgreso {
                         else -> actual
                     }
 
-                    ref.setValue(nuevo) { error, _ ->
-                        if (error != null) {
-                            cont.resumeWithException(error.toException())
-                        } else {
-                            println(" Progreso actualizado para $usuarioId ($tipo completado)")
+                    ref.setValue(nuevo, object : DatabaseReference.CompletionListener {
+                        override fun onComplete(error: DatabaseError?, ref: DatabaseReference) {
+                            if (error != null) {
+                                cont.resumeWithException(error.toException())
+                            } else {
+                                println("Progreso actualizado para $usuarioId ($tipo completado)")
 
-                            // Crear notificación automática solo para quizzes
-                            if (tipo == "quiz" && completado) {
-                                val refNotif = db.getReference("notificaciones").child(usuarioId).push()
-                                val notif = mapOf(
-                                    "titulo" to "¡Quiz completado!",
-                                    "mensaje" to "Has completado un quiz y ganaste 10 puntos ",
-                                    "fecha" to System.currentTimeMillis(),
-                                    "leido" to false
-                                )
-                                refNotif.setValue(notif) { e, _ ->
-                                    if (e != null)
-                                        println("Error al guardar notificación de quiz: ${e.message}")
-                                    else
-                                        println("Notificación de quiz enviada a $usuarioId")
+                                if (tipo == "quiz" && completado) {
+                                    val refNotif = db.getReference("notificaciones").child(usuarioId).push()
+                                    val notif = mapOf(
+                                        "titulo" to "¡Quiz completado!",
+                                        "mensaje" to "Has completado un quiz y ganaste 10 puntos.",
+                                        "fecha" to System.currentTimeMillis(),
+                                        "leido" to false
+                                    )
+                                    
+                              // Guardar notificación de quiz completado
+                                    refNotif.setValue(notif, object : DatabaseReference.CompletionListener {
+                                        override fun onComplete(errorNotif: DatabaseError?, refNotif: DatabaseReference) {
+                                            if (errorNotif != null)
+                                                println("Error al enviar notificación: ${errorNotif.message}")
+                                            else
+                                                println("Notificación de quiz enviada a $usuarioId")
+                                        }
+                                    })
                                 }
-                            }
 
-                            cont.resume(Unit)
+                                cont.resume(Unit)
+                            }
                         }
-                    }
+                    })
                 }
 
                 override fun onCancelled(error: DatabaseError) {
@@ -137,26 +152,22 @@ object ServicioProgreso {
     suspend fun reiniciarProgreso(usuarioId: String) =
         suspendCancellableCoroutine { cont ->
             val ref = db.getReference("progreso").child(usuarioId)
-            ref.setValue(Progreso()) { error, _ ->
-                if (error != null) cont.resumeWithException(error.toException())
-                else cont.resume(Unit)
-            }
+            ref.setValue(Progreso(), object : DatabaseReference.CompletionListener {
+                override fun onComplete(error: DatabaseError?, ref: DatabaseReference) {
+                    if (error != null) cont.resumeWithException(error.toException())
+                    else cont.resume(Unit)
+                }
+            })
         }
 
-    // NUEVAS FUNCIONES DE RACHAS
-
-    // Obtener racha de un estudiante
+    // Obtener racha
     suspend fun obtenerRacha(cursoId: String, estudianteId: String): Map<String, Any>? =
         suspendCancellableCoroutine { cont ->
             val ref = db.getReference("rachas").child(cursoId).child(estudianteId)
             ref.addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
-                    if (snapshot.exists()) {
-                        val data = snapshot.value as? Map<String, Any>
-                        cont.resume(data)
-                    } else {
-                        cont.resume(null)
-                    }
+                    val data = snapshot.value as? Map<String, Any>
+                    cont.resume(data)
                 }
 
                 override fun onCancelled(error: DatabaseError) {
@@ -165,38 +176,57 @@ object ServicioProgreso {
             })
         }
 
-    // Actualizar racha del estudiante (por actividad diaria)
-    suspend fun actualizarRacha(cursoId: String, estudianteId: String) =
+    // Actualizar racha (maneja experiencia y vidas)
+    suspend fun actualizarRacha(cursoId: String, estudianteId: String, exito: Boolean = true) =
         suspendCancellableCoroutine { cont ->
             val ref = db.getReference("rachas").child(cursoId).child(estudianteId)
             ref.addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
                     val hoy = System.currentTimeMillis()
                     val actual = snapshot.value as? Map<String, Any>
+
                     val ultimaFecha = (actual?.get("ultimaFecha") as? Number)?.toLong() ?: 0
                     val diasConsecutivos = (actual?.get("diasConsecutivos") as? Number)?.toInt() ?: 0
+                    val vidas = (actual?.get("vidas") as? Number)?.toInt() ?: 5
+                    val experiencia = (actual?.get("experiencia") as? Number)?.toInt() ?: 0
 
                     val diferenciaDias = (hoy - ultimaFecha) / (1000 * 60 * 60 * 24)
 
-                    val nuevoConteo = when {
-                        diferenciaDias == 1L -> diasConsecutivos + 1 // día consecutivo
-                        diferenciaDias > 1L -> 1 // reinicia la racha
-                        else -> diasConsecutivos // mismo día, no cambia
+                    var nuevoConteo = diasConsecutivos
+                    var nuevasVidas = vidas
+                    var nuevaExperiencia = experiencia
+
+                    if (diferenciaDias >= 1L) {
+                        nuevoConteo = if (diferenciaDias == 1L) diasConsecutivos + 1 else 1
+                    }
+
+                    if (exito) {
+                        nuevaExperiencia += 20
+                        nuevasVidas = (vidas + 1).coerceAtMost(5)
+                    } else {
+                        nuevasVidas = (vidas - 1).coerceAtLeast(0)
+                        nuevaExperiencia = (experiencia - 5).coerceAtLeast(0)
                     }
 
                     val nuevaRacha = mapOf(
                         "diasConsecutivos" to nuevoConteo,
-                        "ultimaFecha" to hoy
+                        "ultimaFecha" to hoy,
+                        "vidas" to nuevasVidas,
+                        "experiencia" to nuevaExperiencia
                     )
 
-                    ref.setValue(nuevaRacha) { error, _ ->
-                        if (error != null) {
-                            cont.resumeWithException(error.toException())
-                        } else {
-                            println(" Racha actualizada para $estudianteId en $cursoId: $nuevoConteo días consecutivos")
-                            cont.resume(Unit)
+                    ref.setValue(nuevaRacha, object : DatabaseReference.CompletionListener {
+                        override fun onComplete(error: DatabaseError?, ref: DatabaseReference) {
+                            if (error != null) {
+                                cont.resumeWithException(error.toException())
+                            } else {
+                                println(
+                                    "Racha actualizada para $estudianteId en $cursoId: $nuevoConteo días, $nuevasVidas vidas, $nuevaExperiencia XP"
+                                )
+                                cont.resume(Unit)
+                            }
                         }
-                    }
+                    })
                 }
 
                 override fun onCancelled(error: DatabaseError) {

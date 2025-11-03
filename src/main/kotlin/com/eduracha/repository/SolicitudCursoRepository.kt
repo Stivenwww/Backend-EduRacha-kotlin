@@ -75,13 +75,13 @@ class SolicitudCursoRepository {
         }
 
     // Agregar estudiante con sus datos al curso
-    
-suspend fun agregarEstudianteACurso(
+ suspend fun agregarEstudianteACurso(
     cursoId: String,
     estudianteId: String,
     nombre: String,
     email: String
 ) = suspendCancellableCoroutine<Unit> { cont ->
+
     val refEstudiante = refCursos.child(cursoId).child("estudiantes").child(estudianteId)
 
     val data = mapOf(
@@ -90,46 +90,66 @@ suspend fun agregarEstudianteACurso(
         "email" to email
     )
 
-    refEstudiante.setValue(data) { error, _ ->
-        if (error != null) {
-            cont.resumeWithException(error.toException())
-        } else {
-            //  Inicializar inscripción con vidas
-            val refInscripcion = db.getReference("inscripciones")
-                .child(cursoId)
-                .child(estudianteId)
+    refEstudiante.setValue(data, object : DatabaseReference.CompletionListener {
+        override fun onComplete(error: DatabaseError?, ref: DatabaseReference) {
+            if (error != null) {
+                cont.resumeWithException(error.toException())
+            } else {
+                // Inicializar inscripción con vidas
+                val refInscripcion = db.getReference("inscripciones")
+                    .child(cursoId)
+                    .child(estudianteId)
 
-            val inscripcionData = mapOf(
-                "userId" to estudianteId,
-                "cursoId" to cursoId,
-                "estado" to "aprobado",
-                "vidasActuales" to 5,
-                "vidasMax" to 5,
-                "ultimaRegen" to System.currentTimeMillis(),
-                "intentosHechos" to 0
-            )
+                val inscripcionData = mapOf(
+                    "userId" to estudianteId,
+                    "cursoId" to cursoId,
+                    "estado" to "aprobado",
+                    "vidasActuales" to 5,
+                    "vidasMax" to 5,
+                    "ultimaRegen" to System.currentTimeMillis(),
+                    "intentosHechos" to 0
+                )
 
-            refInscripcion.setValue(inscripcionData) { errorInsc, _ ->
-                if (errorInsc != null) {
-                    println("Error inicializando inscripción: ${errorInsc.message}")
-                }
+                refInscripcion.setValue(inscripcionData, object : DatabaseReference.CompletionListener {
+                    override fun onComplete(errorInsc: DatabaseError?, ref2: DatabaseReference) {
+                        if (errorInsc != null) {
+                            println("Error inicializando inscripción: ${errorInsc.message}")
+                        }
 
-                // Inicializar progreso y racha del estudiante
-                try {
-                    com.eduracha.services.ServicioProgreso.inicializarDatosEstudiante(
-                        estudianteId = estudianteId,
-                        cursoId = cursoId,
-                        nombre = nombre,
-                        email = email
-                    )
-                } catch (e: Exception) {
-                    println("Error inicializando progreso: ${e.message}")
-                }
+                        // Sincronizar las vidas iniciales con el nodo de rachas
+                        val refRacha = db.getReference("rachas").child(cursoId).child(estudianteId)
+                        
+                        val rachaData = mapOf(
+                            "vidas" to 5,
+                            "experiencia" to 0
+                        )
+                        
+                        refRacha.updateChildren(rachaData, object : DatabaseReference.CompletionListener {
+                            override fun onComplete(errorRacha: DatabaseError?, ref3: DatabaseReference) {
+                                if (errorRacha != null) {
+                                    println("Error inicializando racha: ${errorRacha.message}")
+                                }
 
-                cont.resume(Unit)
+                                // Inicializar progreso y racha del estudiante
+                                try {
+                                    com.eduracha.services.ServicioProgreso.inicializarDatosEstudiante(
+                                        estudianteId = estudianteId,
+                                        cursoId = cursoId,
+                                        nombre = nombre,
+                                        email = email
+                                    )
+                                } catch (e: Exception) {
+                                    println("Error inicializando progreso: ${e.message}")
+                                }
+
+                                cont.resume(Unit)
+                            }
+                        })
+                    }
+                })
             }
         }
-    }
+    })
 }
 
     // Obtener solicitud por ID

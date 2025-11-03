@@ -9,6 +9,7 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.coroutines.*
 import com.eduracha.services.ServicioProgreso
+import com.google.firebase.auth.FirebaseAuth
 
 fun Application.solicitudCursoRoutes() {
     val repo = SolicitudCursoRepository()
@@ -227,42 +228,112 @@ post("/curso/{cursoId}/estudiante/{estudianteId}/estado") {
 }
  // Falta por probar 
 
-// Obtener racha del estudiante en el curso numero de días consecutivos de actividad
-get("/curso/{cursoId}/estudiante/{estudianteId}/racha") {
-    val cursoId = call.parameters["cursoId"]
-        ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
-
-    val estudianteId = call.parameters["estudianteId"]
-        ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del estudiante"))
-
+// Obtener racha del estudiante autenticado
+get("/curso/{cursoId}/racha") {
     try {
-        val data = ServicioProgreso.obtenerRacha(cursoId, estudianteId)
-        if (data != null)
+        val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
+            ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
+
+        val decodedToken = FirebaseAuth.getInstance().verifyIdToken(token)
+        val userId = decodedToken.uid
+
+        val cursoId = call.parameters["cursoId"]
+            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
+
+        val data = ServicioProgreso.obtenerRacha(cursoId, userId)
+        
+        if (data != null) {
             call.respond(HttpStatusCode.OK, data)
-        else
+        } else {
             call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No se encontró racha"))
+        }
     } catch (e: Exception) {
         call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
     }
 }
 
-// Actualizar racha del estudiante en el curso 
-post("/curso/{cursoId}/estudiante/{estudianteId}/actualizarRacha") {
-    val cursoId = call.parameters["cursoId"]
-        ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
-
-    val estudianteId = call.parameters["estudianteId"]
-        ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del estudiante"))
-
+// Actualizar racha del estudiante autenticado
+post("/curso/{cursoId}/racha/actualizar") {
     try {
-        ServicioProgreso.actualizarRacha(cursoId, estudianteId)
+        val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
+            ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
+
+        val decodedToken = FirebaseAuth.getInstance().verifyIdToken(token)
+        val userId = decodedToken.uid
+
+        val cursoId = call.parameters["cursoId"]
+            ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
+
+        val exito = call.request.queryParameters["exito"]?.toBoolean() ?: true
+
+        ServicioProgreso.actualizarRacha(cursoId, userId, exito)
         call.respond(HttpStatusCode.OK, mapOf("mensaje" to "Racha actualizada correctamente"))
     } catch (e: Exception) {
         call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
     }
 }
 
+// Obtener experiencia del estudiante
+get("/curso/{cursoId}/experiencia") {
+    try {
+        val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
+            ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
 
+        val decodedToken = FirebaseAuth.getInstance().verifyIdToken(token)
+        val userId = decodedToken.uid
+
+        val cursoId = call.parameters["cursoId"]
+            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
+
+        val racha = ServicioProgreso.obtenerRacha(cursoId, userId)
+        
+        if (racha != null) {
+            val experiencia = (racha["experiencia"] as? Number)?.toInt() ?: 0
+            val vidas = (racha["vidas"] as? Number)?.toInt() ?: 5
+            
+            call.respond(HttpStatusCode.OK, mapOf(
+                "experiencia" to experiencia,
+                "vidas" to vidas
+            ))
+        } else {
+            call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No se encontró información"))
+        }
+    } catch (e: Exception) {
+        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+    }
+}
+
+// RUTAS ADMIN (para docentes que quieren ver racha de sus estudiantes)
+get("/curso/{cursoId}/estudiante/{estudianteId}/racha") {
+    try {
+        val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
+            ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
+
+        val decodedToken = FirebaseAuth.getInstance().verifyIdToken(token)
+        val claims = decodedToken.claims
+        val rol = claims["rol"] as? String
+
+        if (rol != "docente" && rol != "admin") {
+            return@get call.respond(HttpStatusCode.Forbidden, mapOf("error" to "No tienes permisos"))
+        }
+
+        val cursoId = call.parameters["cursoId"]
+            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
+
+        val estudianteId = call.parameters["estudianteId"]
+            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del estudiante"))
+
+        val data = ServicioProgreso.obtenerRacha(cursoId, estudianteId)
+        
+        if (data != null) {
+            call.respond(HttpStatusCode.OK, data)
+        } else {
+            call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No se encontró racha"))
+        }
+    } catch (e: Exception) {
+        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+    }
+}
         }
     }
 }
