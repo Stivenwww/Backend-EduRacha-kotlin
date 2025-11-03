@@ -124,3 +124,12 @@ data class Inscripcion(
     val ultimaRegen: Long = 0,
     val intentosHechos: Int = 0
 )
+@Serializable
+data class TemaInfoResponse(
+    val temaId: String,
+    val cursoId: String,
+    val preguntasDisponibles: Int,
+    val vidasActuales: Int,
+    val explicacionVista: Boolean,
+    val inscrito: Boolean
+)

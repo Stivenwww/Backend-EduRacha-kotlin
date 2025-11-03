@@ -151,58 +151,65 @@ fun Route.quizRoutes() {
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
         }
     }
+// GET /quiz/curso/{cursoId}/tema/{temaId}/info
+get("/curso/{cursoId}/tema/{temaId}/info") {
+    try {
+        val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
+            ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
 
-    // GET /quiz/curso/{cursoId}/tema/{temaId}/info
-    get("/curso/{cursoId}/tema/{temaId}/info") {
-        try {
-            val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
-                ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
+        val decodedToken = FirebaseAuth.getInstance().verifyIdToken(token)
+        val userId = decodedToken.uid
 
-            val decodedToken = FirebaseAuth.getInstance().verifyIdToken(token)
-            val userId = decodedToken.uid
+        val cursoId = call.parameters["cursoId"]
+            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "cursoId es requerido"))
 
-            val cursoId = call.parameters["cursoId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "cursoId es requerido"))
+        val temaId = call.parameters["temaId"]
+            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "temaId es requerido"))
 
-            val temaId = call.parameters["temaId"]
-                ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "temaId es requerido"))
-
-            // Obtener tema
-            val tema = quizRepo.verificarTemaEnCurso(cursoId, temaId)
-            if (!tema) {
-                return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "Tema no encontrado"))
-            }
-
-            // Obtener inscripción y vidas
-            val inscripcion = quizRepo.obtenerInscripcion(cursoId, userId)
-            val vidas = if (inscripcion != null) {
-                val inscripcionActualizada = quizRepo.regenerarVidas(cursoId, inscripcion, QuizService.VIDA_REGEN_MINUTOS)
-                if (inscripcionActualizada.vidasActuales != inscripcion.vidasActuales) {
-                    quizRepo.actualizarInscripcion(cursoId, inscripcionActualizada)
-                }
-                inscripcionActualizada.vidasActuales
-            } else {
-                0
-            }
-
-            // Contar preguntas disponibles
-            val preguntas = preguntaRepo.obtenerPreguntasPorCursoYEstado(cursoId, "aprobada")
-                .filter { it.temaId == temaId }
-
-            // Verificar si vio la explicación
-            val vioExplicacion = quizRepo.verificarExplicacionVista(userId, temaId)
-
-            call.respond(HttpStatusCode.OK, mapOf(
-                "temaId" to temaId,
-                "cursoId" to cursoId,
-                "preguntasDisponibles" to preguntas.size,
-                "vidasActuales" to vidas,
-                "explicacionVista" to vioExplicacion,
-                "inscrito" to (inscripcion != null)
-            ))
-
-        } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        // Obtener tema
+        val tema = quizRepo.verificarTemaEnCurso(cursoId, temaId)
+        if (!tema) {
+            return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "Tema no encontrado"))
         }
+
+        // Obtener inscripción y vidas
+        val inscripcion = quizRepo.obtenerInscripcion(cursoId, userId)
+        val vidas = if (inscripcion != null) {
+            val inscripcionActualizada = quizRepo.regenerarVidas(
+                cursoId,
+                inscripcion,
+                QuizService.VIDA_REGEN_MINUTOS
+            )
+            if (inscripcionActualizada.vidasActuales != inscripcion.vidasActuales) {
+                quizRepo.actualizarInscripcion(cursoId, inscripcionActualizada)
+            }
+            inscripcionActualizada.vidasActuales
+        } else {
+            0
+        }
+
+        // Contar preguntas disponibles
+        val preguntas = preguntaRepo.obtenerPreguntasPorCursoYEstado(cursoId, "aprobada")
+            .filter { it.temaId == temaId }
+
+        // Verificar si vio la explicación
+        val vioExplicacion = quizRepo.verificarExplicacionVista(userId, temaId)
+
+        // Enviar respuesta con DTO seguro
+        val response = TemaInfoResponse(
+            temaId = temaId,
+            cursoId = cursoId,
+            preguntasDisponibles = preguntas.size,
+            vidasActuales = vidas,
+            explicacionVista = vioExplicacion,
+            inscrito = (inscripcion != null)
+        )
+
+        call.respond(HttpStatusCode.OK, response)
+
+    } catch (e: Exception) {
+        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error interno del servidor")))
     }
+}
+
 }
