@@ -11,13 +11,16 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 
+
 fun Route.quizRoutes() {
 
     val quizRepo = QuizRepository()
     val preguntaRepo = PreguntaRepository()
     val quizService = QuizService(quizRepo, preguntaRepo)
 
-    // Marcar explicación como vista
+    
+    
+    // POST /quiz/explicacion/marcar-vista
     post("/explicacion/marcar-vista") {
         try {
             val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
@@ -39,8 +42,8 @@ fun Route.quizRoutes() {
         }
     }
 
-    // Iniciar quiz
-    post("/quiz/iniciar") {
+    // POST /quiz/iniciar
+    post("/iniciar") {
         try {
             val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
                 ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
@@ -61,8 +64,8 @@ fun Route.quizRoutes() {
         }
     }
 
-    // Finalizar quiz
-    post("/quiz/finalizar") {
+    // POST /quiz/finalizar
+    post("/finalizar") {
         try {
             val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
                 ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
@@ -83,8 +86,8 @@ fun Route.quizRoutes() {
         }
     }
 
-    // Ver revisión del quiz
-    get("/quiz/revision/{quizId}") {
+    // GET /quiz/revision/{quizId}
+    get("/revision/{quizId}") {
         try {
             val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
                 ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
@@ -106,7 +109,7 @@ fun Route.quizRoutes() {
         }
     }
 
-    // Obtener vidas del estudiante
+    // GET /quiz/curso/{cursoId}/vidas
     get("/curso/{cursoId}/vidas") {
         try {
             val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
@@ -129,8 +132,8 @@ fun Route.quizRoutes() {
         }
     }
 
-    // Obtener historial de quizzes del estudiante
-    get("/quiz/historial") {
+    // GET /quiz/historial
+    get("/historial") {
         try {
             val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
                 ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
@@ -149,7 +152,7 @@ fun Route.quizRoutes() {
         }
     }
 
-    // Obtener información del tema para el quiz
+    // GET /quiz/curso/{cursoId}/tema/{temaId}/info
     get("/curso/{cursoId}/tema/{temaId}/info") {
         try {
             val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")

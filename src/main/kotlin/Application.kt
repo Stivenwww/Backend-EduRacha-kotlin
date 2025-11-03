@@ -72,7 +72,11 @@ val quizService = QuizService(quizRepo, preguntaRepo)
         solicitudCursoRoutes()
         chatRoutes()
         preguntasRoutes()
-        quizRoutes()
+
+        
+         route("/quiz") {
+            quizRoutes()
+        }
 
     }
 }
