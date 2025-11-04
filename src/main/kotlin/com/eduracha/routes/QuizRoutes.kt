@@ -10,6 +10,8 @@ import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import com.eduracha.repository.RachaRepository
+
 
 
 fun Route.quizRoutes() {
@@ -236,5 +238,28 @@ get("/{quizId}/retroalimentacion") {
     }
 }
 
+// GET /quiz/curso/{cursoId}/ranking?filtro=experiencia  /ranking?filtro=racha   /ranking?filtro=vidas
+get("/curso/{cursoId}/ranking") {
+    try {
+        val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
+            ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
 
+        FirebaseAuth.getInstance().verifyIdToken(token)
+
+        val cursoId = call.parameters["cursoId"]
+            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "cursoId es requerido"))
+
+        // Filtro (por defecto experiencia)
+        val filtro = call.request.queryParameters["filtro"] ?: "experiencia"
+
+        val rachaRepo = RachaRepository()
+        val ranking = rachaRepo.obtenerRankingPorCurso(cursoId, filtro)
+
+        call.respond(HttpStatusCode.OK, mapOf("ranking" to ranking))
+
+    } catch (e: Exception) {
+        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error interno")))
+    }
 }
+}
+
