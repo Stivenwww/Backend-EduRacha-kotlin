@@ -269,4 +269,47 @@ class QuizService(
             "minutosParaProximaVida" to minutosParaProximaVida
         )
     }
+    suspend fun obtenerRetroalimentacionFallos(
+    quizId: String,
+    userId: String
+): RetroalimentacionFallosResponse {
+    val quiz = quizRepo.obtenerQuizPorId(quizId)
+        ?: throw IllegalStateException("Quiz no encontrado")
+
+    if (quiz.estudianteId != userId) {
+        throw IllegalStateException("No tienes permiso para ver este quiz")
+    }
+
+    if (quiz.estado != "finalizado") {
+        throw IllegalStateException("El quiz no está finalizado aún")
+    }
+
+    // Filtrar solo las preguntas que el estudiante falló
+    val preguntasFalladas = quiz.respuestas.filter { !it.esCorrecta }
+
+    val detallesFallos = preguntasFalladas.map { respuesta ->
+        val pregunta = preguntaRepo.obtenerPreguntaPorId(respuesta.preguntaId)
+            ?: throw IllegalStateException("Pregunta no encontrada: ${respuesta.preguntaId}")
+
+        val respuestaCorrectaIndex = pregunta.opciones.indexOfFirst { it.esCorrecta }
+        val respuestaUsuario = pregunta.opciones.getOrNull(respuesta.respuestaSeleccionada)
+        val respuestaCorrecta = pregunta.opciones.getOrNull(respuestaCorrectaIndex)
+
+        RetroalimentacionPregunta(
+            preguntaId = pregunta.id ?: "",
+            texto = pregunta.texto,
+            respuestaUsuarioTexto = respuestaUsuario?.texto ?: "Sin respuesta registrada",
+            respuestaCorrectaTexto = respuestaCorrecta?.texto ?: "Sin respuesta correcta definida",
+            explicacion = pregunta.explicacionCorrecta
+                ?: "No hay explicación disponible para esta pregunta."
+        )
+    }
+
+    return RetroalimentacionFallosResponse(
+        quizId = quizId,
+        totalFallos = detallesFallos.size,
+        preguntasFalladas = detallesFallos
+    )
+}
+
 }

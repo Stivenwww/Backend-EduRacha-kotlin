@@ -212,4 +212,29 @@ get("/curso/{cursoId}/tema/{temaId}/info") {
     }
 }
 
+        // GET /quiz/{quizId}/retroalimentacion
+get("/{quizId}/retroalimentacion") {
+    try {
+        val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
+            ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
+
+        val decodedToken = FirebaseAuth.getInstance().verifyIdToken(token)
+        val userId = decodedToken.uid
+
+        val quizId = call.parameters["quizId"]
+            ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "quizId es requerido"))
+
+        // Lógica en el servicio
+        val response = quizService.obtenerRetroalimentacionFallos(quizId, userId)
+
+        call.respond(HttpStatusCode.OK, response)
+
+    } catch (e: IllegalStateException) {
+        call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
+    } catch (e: Exception) {
+        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+    }
+}
+
+
 }

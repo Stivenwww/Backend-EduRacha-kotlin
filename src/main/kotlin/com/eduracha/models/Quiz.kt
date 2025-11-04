@@ -133,3 +133,18 @@ data class TemaInfoResponse(
     val explicacionVista: Boolean,
     val inscrito: Boolean
 )
+
+
+data class RetroalimentacionFallosResponse(
+    val quizId: String,
+    val totalFallos: Int,
+    val preguntasFalladas: List<RetroalimentacionPregunta>
+)
+
+data class RetroalimentacionPregunta(
+    val preguntaId: String,
+    val texto: String,
+    val respuestaUsuarioTexto: String,
+    val respuestaCorrectaTexto: String,
+    val explicacion: String
+)
