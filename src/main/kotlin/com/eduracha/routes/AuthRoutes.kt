@@ -4,6 +4,7 @@ import com.eduracha.models.*
 import com.eduracha.utils.JwtConfig
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.UserRecord
+import com.google.firebase.database.FirebaseDatabase
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*
@@ -13,77 +14,94 @@ import io.ktor.server.routing.*
 fun Route.authRoutes() {
 
     val firebaseAuth = FirebaseAuth.getInstance()
+    val database = FirebaseDatabase.getInstance()
 
-    // Registro de usuario
+    /**
+     * Registro de usuario nuevo
+     */
     post("/registro") {
-    val datos = call.receive<RegistroRequest>()
-    val database = com.google.firebase.database.FirebaseDatabase.getInstance()
-    val refUsuarios = database.getReference("usuarios")
+        val datos = call.receive<RegistroRequest>()
+        val refUsuarios = database.getReference("usuarios")
 
-    try {
-        //  Crear usuario en Firebase Authentication
-        val userRecord = firebaseAuth.createUser(
-            UserRecord.CreateRequest()
-                .setEmail(datos.correo)
-                .setPassword(datos.contrasena)
-                .setDisplayName(datos.nombreCompleto)
-        )
+        try {
+            // Crear usuario en Firebase Authentication
+            val userRecord = firebaseAuth.createUser(
+                UserRecord.CreateRequest()
+                    .setEmail(datos.correo)
+                    .setPassword(datos.contrasena)
+                    .setDisplayName(datos.nombreCompleto)
+            )
 
-        //  Guardar rol como claim personalizado
-        firebaseAuth.setCustomUserClaims(userRecord.uid, mapOf("rol" to datos.rol))
+            // Guardar rol como claim personalizado
+            firebaseAuth.setCustomUserClaims(userRecord.uid, mapOf("rol" to datos.rol))
 
-        //  Guardar información adicional en Realtime Database
-        val usuarioInfo = mapOf(
-            "uid" to userRecord.uid,
-            "nombreCompleto" to datos.nombreCompleto,
-            "apodo" to datos.apodo,
-            "correo" to datos.correo,
-            "rol" to datos.rol,
-            "fechaRegistro" to System.currentTimeMillis()
-        )
-
-        refUsuarios.child(userRecord.uid).setValueAsync(usuarioInfo)
-
-        // Responder al cliente
-        call.respond(
-            HttpStatusCode.Created,
-            mapOf(
+            // Guardar información adicional en Realtime Database
+            val usuarioInfo = mapOf(
                 "uid" to userRecord.uid,
+                "nombreCompleto" to datos.nombreCompleto,
+                "apodo" to datos.apodo,
                 "correo" to datos.correo,
                 "rol" to datos.rol,
-                "nombreCompleto" to datos.nombreCompleto,
-                "apodo" to datos.apodo
+                "fechaRegistro" to System.currentTimeMillis()
             )
-        )
-    } catch (e: Exception) {
-        e.printStackTrace()
-        call.respond(HttpStatusCode.BadRequest, "Error al registrar usuario: ${e.message}")
-    }
-}
 
-    //  Login con correo y contraseña
+            refUsuarios.child(userRecord.uid).setValueAsync(usuarioInfo).get()
+
+            // Generar token JWT con UID, email y rol
+            val token = JwtConfig.generateToken(userRecord.uid, datos.correo, datos.rol)
+
+            call.respond(
+                HttpStatusCode.Created,
+                mapOf(
+                    "uid" to userRecord.uid,
+                    "correo" to datos.correo,
+                    "rol" to datos.rol,
+                    "nombreCompleto" to datos.nombreCompleto,
+                    "apodo" to datos.apodo,
+                    "token" to token
+                )
+            )
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Error al registrar usuario: ${e.message}"))
+        }
+    }
+
+    /**
+     * Login con correo y contraseña (desde base de datos Firebase)
+     */
     post("/login") {
         val credenciales = call.receive<User>()
 
         try {
             val userRecord = firebaseAuth.getUserByEmail(credenciales.email)
 
-            // Nota: Firebase Admin SDK no valida contraseñas.
-            // Se recomienda validar desde frontend o con Firebase Auth REST API.
+            // Obtener rol desde custom claims
+            val customClaims = userRecord.customClaims
+            val rol = customClaims["rol"] as? String ?: "estudiante"
 
-            val token = JwtConfig.generateToken(credenciales.email)
-            call.respond(mapOf(
-                "firebase_uid" to userRecord.uid,
-                "email" to userRecord.email,
-                "token" to token
-            ))
+            // Generar token JWT
+            val token = JwtConfig.generateToken(userRecord.uid, credenciales.email, rol)
+
+            call.respond(
+                HttpStatusCode.OK,
+                mapOf(
+                    "firebase_uid" to userRecord.uid,
+                    "email" to userRecord.email,
+                    "rol" to rol,
+                    "token" to token
+                )
+            )
+
         } catch (e: Exception) {
             e.printStackTrace()
-            call.respond(HttpStatusCode.Unauthorized, "Credenciales inválidas o usuario no encontrado")
+            call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Credenciales inválidas o usuario no encontrado"))
         }
     }
 
-    //  Login con Google
+// Login con Google
+   //  Login con Google
     post("/login/google") {
         val data = call.receive<GoogleLoginRequest>()
         try {
@@ -101,54 +119,4 @@ fun Route.authRoutes() {
             call.respond(HttpStatusCode.Unauthorized, "Token de Google inválido o expirado")
         }
     }
-
-
-    /* // Simulación de login con Google (para pruebas sin Firebase Auth en frontend)
-    post("/login/google/mock") {
-    val data = call.receive<Map<String, String>>()
-    val email = data["email"] ?: return@post call.respondText(
-        "El campo 'email' es obligatorio",
-        status = HttpStatusCode.BadRequest
-    )
-
-    try {
-        val firebaseAuth = FirebaseAuth.getInstance()
-
-        // Verificar si el usuario ya existe
-        val userRecord = try {
-            firebaseAuth.getUserByEmail(email)
-        } catch (e: Exception) {
-            // Si no existe, lo creamos
-            val newUser = UserRecord.CreateRequest()
-                .setEmail(email)
-                .setPassword("google_temp_pass_${System.currentTimeMillis()}") // contraseña temporal
-                .setDisplayName("Usuario Google Simulado")
-            firebaseAuth.createUser(newUser)
-        }
-
-        // Creamos un token simulado JWT de tu backend
-        val mockToken = "jwt_simulado_${userRecord.uid}"
-
-        call.respond(
-            mapOf(
-                "mensaje" to "Inicio de sesión simulado exitoso y usuario registrado/verificado en Firebase",
-                "firebase_uid" to userRecord.uid,
-                "email" to userRecord.email,
-                "token" to mockToken
-            )
-        )
-    } catch (e: Exception) {
-        e.printStackTrace()
-        call.respond(
-            HttpStatusCode.InternalServerError,
-            "Error al registrar/verificar usuario en Firebase: ${e.message}"
-        )
-    }
-}
-
- */
-
-
-
-
 }

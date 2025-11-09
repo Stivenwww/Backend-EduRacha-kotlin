@@ -7,6 +7,10 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import java.time.Instant
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import com.eduracha.models.PerfilCurso
+import com.eduracha.models.EstadoTema
+import com.eduracha.models.Vidas
+
 
 class CursoRepository {
     private val database = FirebaseDatabase.getInstance()
@@ -175,4 +179,55 @@ class CursoRepository {
                 }
             })
         }
+// MÉTODOS DE PERFIL DE USUARIO EN CURSO 
+
+suspend fun actualizarVidasCurso(uid: String, cursoId: String, vidas: Vidas) {
+    database.getReference("usuarios/$uid/perfil/cursos/$cursoId/vidas")
+        .setValueAsync(vidas).get()
+}
+
+suspend fun obtenerEstadoTema(
+    uid: String,
+    cursoId: String,
+    temaId: String
+): EstadoTema? = suspendCancellableCoroutine { cont ->
+    database.getReference("usuarios/$uid/perfil/cursos/$cursoId/temasCompletados/$temaId")
+        .addListenerForSingleValueEvent(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                cont.resume(snapshot.getValue(EstadoTema::class.java))
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                cont.resumeWithException(error.toException())
+            }
+        })
+}
+
+suspend fun crearOActualizarEstadoTema(
+    uid: String,
+    cursoId: String,
+    temaId: String,
+    estado: EstadoTema
+) = suspendCancellableCoroutine<Unit> { cont ->
+    database.getReference("usuarios/$uid/perfil/cursos/$cursoId/temasCompletados/$temaId")
+        .setValue(estado) { error, _ ->
+            if (error != null) cont.resumeWithException(error.toException())
+            else cont.resume(Unit)
+        }
+}
+
+// Obtener perfil completo del curso
+suspend fun obtenerPerfilCurso(uid: String, cursoId: String): PerfilCurso? =
+    suspendCancellableCoroutine { cont ->
+        database.getReference("usuarios/$uid/perfil/cursos/$cursoId")
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    cont.resume(snapshot.getValue(PerfilCurso::class.java))
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    cont.resumeWithException(error.toException())
+                }
+            })
+    }
 }

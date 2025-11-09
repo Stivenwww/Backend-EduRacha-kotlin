@@ -19,7 +19,8 @@ data class Pregunta(
     val fechaRevision: String? = null,
     val notasRevision: String? = null,
     val modificada: Boolean = false,
-    val explicacionCorrecta: String? = null // Texto explicativo de por qué la respuesta es la correcta
+    val explicacionCorrecta: String? = null, // Texto explicativo de por qué la respuesta es la correcta
+    val usadaPorEstudiantes: Map<String, Int> = emptyMap() // estudianteId -> veces usada
 
 )
 

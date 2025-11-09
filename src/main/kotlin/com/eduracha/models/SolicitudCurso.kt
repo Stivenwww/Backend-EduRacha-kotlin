@@ -37,3 +37,4 @@ data class RespuestaSolicitudRequest(
     val aceptar: Boolean,
     val mensaje: String? = null
 )
+

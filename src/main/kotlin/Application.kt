@@ -1,10 +1,6 @@
 package com.eduracha
 
-import com.eduracha.routes.authRoutes
-import com.eduracha.routes.usuarioRoutes
-import com.eduracha.routes.cursoRoutes
-import com.eduracha.routes.solicitudCursoRoutes
-import com.eduracha.routes.chatRoutes
+import com.eduracha.routes.*
 import com.eduracha.utils.FirebaseInit
 import com.google.firebase.database.FirebaseDatabase
 import io.github.cdimascio.dotenv.dotenv
@@ -15,14 +11,13 @@ import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import com.eduracha.repository.PreguntaRepository  
-import com.eduracha.routes.preguntasRoutes
-import com.eduracha.repository.QuizRepository
-import com.eduracha.services.QuizService
-import com.eduracha.routes.quizRoutes
-
-
-
+import io.ktor.http.*
+import com.eduracha.repository.*
+import com.eduracha.services.*
+import com.eduracha.jobs.CronJobReportes
+import com.eduracha.utils.getUserFromToken
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 
 fun main() {
     embeddedServer(Netty, port = 8080, module = Application::module)
@@ -48,35 +43,63 @@ fun Application.module() {
 
     FirebaseInit.initialize(credentialsPath, firebaseUrl)
 
-    val database = FirebaseDatabase.getInstance(firebaseUrl)
-
-   
-// Pasamos 'database' al repositorio (Realtime Database)
-
-val preguntaRepo = PreguntaRepository()
-val quizRepo = QuizRepository()
-val quizService = QuizService(quizRepo, preguntaRepo)
+    // Instanciar repositorios
+    val preguntaRepo = PreguntaRepository()
+    val quizRepo = QuizRepository()
+    val cursoRepo = CursoRepository()
+    
+    // Instanciar servicios
+    val servicioSeleccion = ServicioSeleccionPreguntas(preguntaRepo)
+    val quizService = QuizService(quizRepo, preguntaRepo, cursoRepo, servicioSeleccion)
+    val servicioReportes = ServicioReportesExcel(quizRepo, cursoRepo)
 
     install(ContentNegotiation) {
         json()
     }
+    
     routing {
         get("/") {
-            call.respondText("Servidor EduRacha corriendo correctamente y conectado a Firestore")
+            call.respondText("Servidor EduRacha corriendo correctamente")
         }
 
-        // Rutas principales del proyecto
+        // Rutas principales
         authRoutes()
         usuarioRoutes()
         cursoRoutes()
         solicitudCursoRoutes()
         chatRoutes()
         preguntasRoutes()
+        quizRoutes(quizService)
+        reportesRoutes(servicioReportes)
+    }
+    
+    // Configurar cron jobs
+    configureCronJobs(servicioReportes, cursoRepo)
+}
 
-        
-         route("/quiz") {
-            quizRoutes()
+fun Application.configureCronJobs(servicioReportes: ServicioReportesExcel, cursoRepo: CursoRepository) {
+    val cronJob = CronJobReportes(servicioReportes, cursoRepo)
+    
+    cronJob.iniciar()
+    
+    environment.monitor.subscribe(ApplicationStopped) {
+        cronJob.detener()
+    }
+    
+    routing {
+        post("/admin/generar-reportes") {
+            val user = call.getUserFromToken()
+                ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token inválido o expirado"))
+        if (user.rol != "admin" && user.rol != "docente") {
+                call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Acceso denegado"))
+                return@post
+            }
+            
+            GlobalScope.launch {
+                cronJob.ejecutarManualmente()
+            }
+            
+            call.respond(HttpStatusCode.OK, mapOf("message" to "Generación de reportes iniciada"))
         }
-
     }
 }

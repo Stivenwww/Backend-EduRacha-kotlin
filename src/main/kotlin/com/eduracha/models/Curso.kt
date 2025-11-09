@@ -24,10 +24,29 @@ data class Curso(
     val descripcion: String = "",
     val docenteId: String = "",
     val duracionDias: Int = 0,
+     val fechaInicio: Long = 0, // Timestamp de inicio
+    val fechaFin: Long = 0, // Timestamp de fin
     val temas: Map<String, Tema>? = null,
+     val programacion: ProgramacionCurso? = null, 
     val estado: String = "",
     val fechaCreacion: String = "",
 
+)
+
+@Serializable
+data class ProgramacionCurso(
+    val temasOrdenados: List<String> = emptyList(), // IDs de temas en orden
+    val distribucionTemporal: Map<String, RangoTema> = emptyMap() // temaId -> fechas
+)
+
+@Serializable
+data class RangoTema(
+    val temaId: String = "",
+    val titulo: String = "",
+    val fechaInicio: Long = 0,
+    val fechaFin: Long = 0,
+    val quizzesRequeridos: Int = 0, // Calculado automáticamente
+    val diasAsignados: Int = 0
 )
 
 // Request para generar explicación con IA

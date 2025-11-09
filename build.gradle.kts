@@ -42,6 +42,12 @@ dependencies {
     implementation("io.ktor:ktor-client-core:3.3.0")
     implementation("io.ktor:ktor-client-cio:3.3.0")
 
+    // Apache POI para Excel nuevo
+    implementation("org.apache.poi:poi:5.2.3")
+    implementation("org.apache.poi:poi-ooxml:5.2.3")
+
+    // nuevo   
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
 
 
     implementation("io.ktor:ktor-server-cors:2.3.12")

@@ -40,7 +40,7 @@ data class RespuestaQuiz(
 )
 
 // Requests
-@Serializable
+@Serializableñ
 data class IniciarQuizRequest(
     val cursoId: String,
     val temaId: String
@@ -118,11 +118,14 @@ data class PreguntaRevisionResponse(
 data class Inscripcion(
     val userId: String = "",
     val cursoId: String = "",
-    val estado: String = "en_progreso", // "aprobado", "en_progreso", "inactivo"
+    val estado: String = "pendiente", // "pendiente", "aprobado", "rechazado", "en_progreso", "completado"
+    val fechaInscripcion: Long = 0,
+    val fechaAprobacion: Long? = null,
     val vidasActuales: Int = 5,
     val vidasMax: Int = 5,
     val ultimaRegen: Long = 0,
-    val intentosHechos: Int = 0
+    val intentosHechos: Int = 0,
+    val experienciaTotal: Int = 0
 )
 @Serializable
 data class TemaInfoResponse(
@@ -134,13 +137,14 @@ data class TemaInfoResponse(
     val inscrito: Boolean
 )
 
-
+@Serializable
 data class RetroalimentacionFallosResponse(
     val quizId: String,
     val totalFallos: Int,
     val preguntasFalladas: List<RetroalimentacionPregunta>
 )
 
+@Serializable
 data class RetroalimentacionPregunta(
     val preguntaId: String,
     val texto: String,
