@@ -40,7 +40,7 @@ data class RespuestaQuiz(
 )
 
 // Requests
-@Serializableñ
+@Serializable
 data class IniciarQuizRequest(
     val cursoId: String,
     val temaId: String
@@ -113,7 +113,7 @@ data class PreguntaRevisionResponse(
     val explicacion: String
 )
 
-// Modelo de inscripción (si no lo tienes)
+
 @Serializable
 data class Inscripcion(
     val userId: String = "",

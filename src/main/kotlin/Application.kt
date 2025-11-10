@@ -43,16 +43,29 @@ fun Application.module() {
 
     FirebaseInit.initialize(credentialsPath, firebaseUrl)
 
-    // Instanciar repositorios
-    val preguntaRepo = PreguntaRepository()
-    val quizRepo = QuizRepository()
-    val cursoRepo = CursoRepository()
-    
-    // Instanciar servicios
-    val servicioSeleccion = ServicioSeleccionPreguntas(preguntaRepo)
-    val quizService = QuizService(quizRepo, preguntaRepo, cursoRepo, servicioSeleccion)
-    val servicioReportes = ServicioReportesExcel(quizRepo, cursoRepo)
+    // Inicializar repositorios y servicios
+val preguntaRepo = PreguntaRepository()
+val quizRepo = QuizRepository()
+val cursoRepo = CursoRepository()
+val solicitudPreguntasRepo = SolicitudPreguntasRepository() 
 
+// Servicios
+val servicioSeleccion = ServicioSeleccionPreguntas(
+    preguntaRepo = preguntaRepo,
+    cursoRepo = cursoRepo 
+)
+// Servicio de Quiz
+val quizService = QuizService(
+    quizRepo = quizRepo,
+    preguntaRepo = preguntaRepo,
+    cursoRepo = cursoRepo,
+    servicioSeleccion = servicioSeleccion,
+    solicitudPreguntasRepo = solicitudPreguntasRepo 
+)
+// Servicio de Reportes
+val servicioReportes = ServicioReportesExcel(quizRepo, cursoRepo) 
+
+    
     install(ContentNegotiation) {
         json()
     }

@@ -4,7 +4,9 @@ import com.eduracha.models.Curso
 import com.eduracha.models.Tema
 import com.eduracha.repository.CursoRepository
 import com.eduracha.repository.ExplicacionRepository
+import com.eduracha.repository.SolicitudPreguntasRepository
 import com.eduracha.services.OpenAIService
+import com.eduracha.utils.getUserFromToken
 import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
@@ -53,8 +55,8 @@ data class ExplicacionResponse(
 fun Application.cursoRoutes() {
     val repo = CursoRepository()
     val explicacionRepo = ExplicacionRepository()
+    val solicitudPreguntasRepo = SolicitudPreguntasRepository()
     
-    // Configurar servicio de IA
     val dotenv = dotenv()
     val openAiKey = dotenv["OPENAI_API_KEY"]
     val client = HttpClient(CIO)
@@ -65,8 +67,6 @@ fun Application.cursoRoutes() {
     routing {
         route("/api/cursos") {
 
-            // CRUD BÁSICO DE CURSOS
-            
             post {
                 val curso = call.receive<Curso>()
                 val id = repo.crearCurso(curso)
@@ -110,11 +110,6 @@ fun Application.cursoRoutes() {
                 call.respond(mapOf("message" to "Curso eliminado"))
             }
 
-
-            // GESTIÓN DE TEMAS CON EXPLICACIONES
-
-            // GET /api/cursos/{id}/temas
-            // Obtener todos los temas de un curso
             get("{id}/temas") {
                 val cursoId = call.parameters["id"] ?: return@get call.respond(
                     HttpStatusCode.BadRequest,
@@ -139,8 +134,6 @@ fun Application.cursoRoutes() {
                 }
             }
 
-            // GET /api/cursos/{id}/temas/{temaId}
-            // Obtener un tema específico con su explicación
             get("{id}/temas/{temaId}") {
                 val cursoId = call.parameters["id"] ?: return@get call.respond(
                     HttpStatusCode.BadRequest,
@@ -166,8 +159,6 @@ fun Application.cursoRoutes() {
                 }
             }
 
-            // POST /api/cursos/{id}/temas/simple
-            // Agregar tema sin explicación (para agregar explicación después)
             post("{id}/temas/simple") {
                 val cursoId = call.parameters["id"] ?: return@post call.respond(
                     HttpStatusCode.BadRequest,
@@ -196,9 +187,6 @@ fun Application.cursoRoutes() {
                 }
             }
 
-            // POST /api/cursos/{id}/temas
-            // OPCIÓN A: Tema con explicación manual (aprobada automáticamente)
-            // OPCIÓN B: Tema con explicación IA (pendiente de validación)
             post("{id}/temas") {
                 val cursoId = call.parameters["id"] ?: return@post call.respond(
                     HttpStatusCode.BadRequest,
@@ -208,7 +196,6 @@ fun Application.cursoRoutes() {
                 try {
                     val request = call.receive<TemaConExplicacionRequest>()
 
-                    // OPCIÓN A: Docente proporciona explicación manual
                     if (!request.explicacion.isNullOrBlank() && !request.generarConIA) {
                         val temaId = repo.agregarTemaConExplicacion(
                             cursoId = cursoId,
@@ -227,7 +214,6 @@ fun Application.cursoRoutes() {
                             )
                         )
                     }
-                    // OPCIÓN B: Generar explicación con IA
                     else if (request.generarConIA) {
                         if (iaService == null) {
                             return@post call.respond(
@@ -236,19 +222,15 @@ fun Application.cursoRoutes() {
                             )
                         }
 
-                        // 1. Crear el tema primero
                         val temaId = repo.agregarTema(cursoId, request.tema)
 
-                       // 2. Generar explicación con IA (pasando cursoId y temaId)
                         val explicacionGenerada = iaService.generarExplicacion(
                             cursoId = cursoId,
                             temaId = temaId,
                             tituloTema = request.tema.titulo,
                             contenidoTema = request.tema.contenido
-                    )
+                        )
 
-
-                        // 3. Actualizar el tema con la explicación generada (estado: pendiente)
                         explicacionRepo.actualizarExplicacion(
                             cursoId = cursoId,
                             temaId = temaId,
@@ -269,7 +251,6 @@ fun Application.cursoRoutes() {
                             )
                         )
                     }
-                    // Sin explicación
                     else {
                         val temaId = repo.agregarTema(cursoId, request.tema)
                         val temaCreado = repo.obtenerTema(cursoId, temaId)
@@ -294,8 +275,6 @@ fun Application.cursoRoutes() {
                 }
             }
 
-            // PUT /api/cursos/{id}/temas/{temaId}
-            // Actualizar tema completo
             put("{id}/temas/{temaId}") {
                 val cursoId = call.parameters["id"] ?: return@put call.respond(
                     HttpStatusCode.BadRequest,
@@ -321,8 +300,6 @@ fun Application.cursoRoutes() {
                 }
             }
 
-            // DELETE /api/cursos/{id}/temas/{temaId}
-            // Eliminar tema
             delete("{id}/temas/{temaId}") {
                 val cursoId = call.parameters["id"] ?: return@delete call.respond(
                     HttpStatusCode.BadRequest,
@@ -347,82 +324,72 @@ fun Application.cursoRoutes() {
                 }
             }
 
-           
-            // GESTIÓN DE EXPLICACIONES DE TEMASS
-// POST /api/cursos/{id}/temas/{temaId}/generar-explicacion
-// Generar explicación con IA para un tema existente
-post("{id}/temas/{temaId}/generar-explicacion") {
-    val cursoId = call.parameters["id"] ?: return@post call.respond(
-        HttpStatusCode.BadRequest,
-        mapOf("error" to "Falta ID del curso")
-    )
-    val temaId = call.parameters["temaId"] ?: return@post call.respond(
-        HttpStatusCode.BadRequest,
-        mapOf("error" to "Falta ID del tema")
-    )
+            post("{id}/temas/{temaId}/generar-explicacion") {
+                val cursoId = call.parameters["id"] ?: return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    mapOf("error" to "Falta ID del curso")
+                )
+                val temaId = call.parameters["temaId"] ?: return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    mapOf("error" to "Falta ID del tema")
+                )
 
-    try {
-        if (iaService == null) {
-            return@post call.respond(
-                HttpStatusCode.ServiceUnavailable,
-                mapOf("error" to "Servicio de IA no disponible. Verifica tu OPENAI_API_KEY en .env")
-            )
-        }
+                try {
+                    if (iaService == null) {
+                        return@post call.respond(
+                            HttpStatusCode.ServiceUnavailable,
+                            mapOf("error" to "Servicio de IA no disponible. Verifica tu OPENAI_API_KEY en .env")
+                        )
+                    }
 
-        // Obtener el tema existente
-        val tema = repo.obtenerTema(cursoId, temaId)
-            ?: return@post call.respond(
-                HttpStatusCode.NotFound,
-                mapOf("error" to "Tema no encontrado")
-            )
+                    val tema = repo.obtenerTema(cursoId, temaId)
+                        ?: return@post call.respond(
+                            HttpStatusCode.NotFound,
+                            mapOf("error" to "Tema no encontrado")
+                        )
 
-        // Intentar leer los datos opcionales enviados
-        val request = try {
-            call.receive<GenerarExplicacionRequest>()
-        } catch (e: Exception) {
-            null
-        }
+                    val request = try {
+                        call.receive<GenerarExplicacionRequest>()
+                    } catch (e: Exception) {
+                        null
+                    }
 
-        // Generar la explicación con IA (pasando cursoId y temaId)
-        val explicacionGenerada = iaService.generarExplicacion(
-            cursoId = cursoId,
-            temaId = temaId,
-            tituloTema = request?.tituloTema ?: tema.titulo,
-            contenidoTema = request?.contenidoTema ?: tema.contenido
-        )
+                    val explicacionGenerada = iaService.generarExplicacion(
+                        cursoId = cursoId,
+                        temaId = temaId,
+                        tituloTema = request?.tituloTema ?: tema.titulo,
+                        contenidoTema = request?.contenidoTema ?: tema.contenido
+                    )
 
-        // Guardar la explicación generada con estado "pendiente"
-        explicacionRepo.actualizarExplicacion(
-            cursoId = cursoId,
-            temaId = temaId,
-            explicacion = explicacionGenerada,
-            fuente = "ia",
-            estado = "pendiente"
-        )
+                    explicacionRepo.actualizarExplicacion(
+                        cursoId = cursoId,
+                        temaId = temaId,
+                        explicacion = explicacionGenerada,
+                        fuente = "ia",
+                        estado = "pendiente"
+                    )
 
-        // Obtener el tema actualizado
-        val temaActualizado = repo.obtenerTema(cursoId, temaId)
+                    val temaActualizado = repo.obtenerTema(cursoId, temaId)
 
-        call.respond(
-            HttpStatusCode.OK,
-            ExplicacionResponse(
-                message = "Explicación generada correctamente con IA. Pendiente de validación.",
-                explicacion = explicacionGenerada,
-                fuente = "ia",
-                tema = temaActualizado!!
-            )
-        )
+                    call.respond(
+                        HttpStatusCode.OK,
+                        ExplicacionResponse(
+                            message = "Explicación generada correctamente con IA. Pendiente de validación.",
+                            explicacion = explicacionGenerada,
+                            fuente = "ia",
+                            tema = temaActualizado!!
+                        )
+                    )
 
-    } catch (e: Exception) {
-        e.printStackTrace()
-        call.respond(
-            HttpStatusCode.InternalServerError,
-            mapOf("error" to "Error al generar explicación: ${e.message}")
-        )
-    }
-}
-            // PUT /api/cursos/{id}/temas/{temaId}/validar-explicacion
-            // Validar (aprobar/rechazar) explicación generada por IA
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al generar explicación: ${e.message}")
+                    )
+                }
+            }
+
             put("{id}/temas/{temaId}/validar-explicacion") {
                 val cursoId = call.parameters["id"] ?: return@put call.respond(
                     HttpStatusCode.BadRequest,
@@ -465,8 +432,6 @@ post("{id}/temas/{temaId}/generar-explicacion") {
                 }
             }
 
-            // GET /api/cursos/{id}/temas/{temaId}/explicacion-valida
-            // Verificar si un tema tiene explicación aprobada
             get("{id}/temas/{temaId}/explicacion-valida") {
                 val cursoId = call.parameters["id"] ?: return@get call.respond(
                     HttpStatusCode.BadRequest,
@@ -495,6 +460,292 @@ post("{id}/temas/{temaId}/generar-explicacion") {
                     call.respond(
                         HttpStatusCode.InternalServerError,
                         mapOf("error" to "Error al verificar explicación: ${e.message}")
+                    )
+                }
+            }
+
+            get("/solicitudes-preguntas") {
+                try {
+                    val usuario = call.getUserFromToken()
+                        ?: return@get call.respond(
+                            HttpStatusCode.Unauthorized,
+                            mapOf("error" to "Token inválido o expirado")
+                        )
+
+                    if (usuario.rol != "docente") {
+                        return@get call.respond(
+                            HttpStatusCode.Forbidden,
+                            mapOf("error" to "Solo los docentes pueden ver las solicitudes")
+                        )
+                    }
+
+                    val solicitudes = solicitudPreguntasRepo.obtenerSolicitudesPorDocente(usuario.uid)
+                    
+                    call.respond(HttpStatusCode.OK, solicitudes)
+
+                } catch (e: Exception) {
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener solicitudes: ${e.message}")
+                    )
+                }
+            }
+
+            get("/solicitudes-preguntas/resumen") {
+                try {
+                    val usuario = call.getUserFromToken()
+                        ?: return@get call.respond(
+                            HttpStatusCode.Unauthorized,
+                            mapOf("error" to "Token inválido o expirado")
+                        )
+
+                    if (usuario.rol != "docente") {
+                        return@get call.respond(
+                            HttpStatusCode.Forbidden,
+                            mapOf("error" to "Solo los docentes pueden ver el resumen")
+                        )
+                    }
+
+                    val resumen = solicitudPreguntasRepo.obtenerResumenSolicitudesPorDocente(usuario.uid)
+                    
+                    call.respond(HttpStatusCode.OK, resumen)
+
+                } catch (e: Exception) {
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener resumen: ${e.message}")
+                    )
+                }
+            }
+
+            get("{id}/solicitudes-preguntas") {
+                try {
+                    val cursoId = call.parameters["id"]
+                        ?: return@get call.respond(
+                            HttpStatusCode.BadRequest,
+                            mapOf("error" to "Falta ID del curso")
+                        )
+
+                    val usuario = call.getUserFromToken()
+                        ?: return@get call.respond(
+                            HttpStatusCode.Unauthorized,
+                            mapOf("error" to "Token inválido o expirado")
+                        )
+
+                    if (usuario.rol != "docente") {
+                        return@get call.respond(
+                            HttpStatusCode.Forbidden,
+                            mapOf("error" to "Solo los docentes pueden ver las solicitudes")
+                        )
+                    }
+
+                    val curso = repo.obtenerCursoPorId(cursoId)
+                    if (curso?.docenteId != usuario.uid) {
+                        return@get call.respond(
+                            HttpStatusCode.Forbidden,
+                            mapOf("error" to "No tienes permiso para ver las solicitudes de este curso")
+                        )
+                    }
+
+                    val todasSolicitudes = solicitudPreguntasRepo.obtenerSolicitudesPorDocente(usuario.uid)
+                    val solicitudesDelCurso = todasSolicitudes.filter { it.cursoId == cursoId }
+                    
+                    call.respond(HttpStatusCode.OK, solicitudesDelCurso)
+
+                } catch (e: Exception) {
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener solicitudes: ${e.message}")
+                    )
+                }
+            }
+
+            get("{id}/temas/{temaId}/solicitudes-preguntas") {
+                try {
+                    val cursoId = call.parameters["id"]
+                        ?: return@get call.respond(
+                            HttpStatusCode.BadRequest,
+                            mapOf("error" to "Falta ID del curso")
+                        )
+                    
+                    val temaId = call.parameters["temaId"]
+                        ?: return@get call.respond(
+                            HttpStatusCode.BadRequest,
+                            mapOf("error" to "Falta ID del tema")
+                        )
+
+                    val usuario = call.getUserFromToken()
+                        ?: return@get call.respond(
+                            HttpStatusCode.Unauthorized,
+                            mapOf("error" to "Token inválido o expirado")
+                        )
+
+                    if (usuario.rol != "docente") {
+                        return@get call.respond(
+                            HttpStatusCode.Forbidden,
+                            mapOf("error" to "Solo los docentes pueden ver las solicitudes")
+                        )
+                    }
+
+                    val todasSolicitudes = solicitudPreguntasRepo.obtenerSolicitudesPorDocente(usuario.uid)
+                    val solicitudesDelTema = todasSolicitudes.filter { 
+                        it.cursoId == cursoId && it.temaId == temaId 
+                    }
+                    
+                    call.respond(HttpStatusCode.OK, solicitudesDelTema)
+
+                } catch (e: Exception) {
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener solicitudes: ${e.message}")
+                    )
+                }
+            }
+
+            put("/solicitudes-preguntas/{solicitudId}/atender") {
+                try {
+                    val solicitudId = call.parameters["solicitudId"]
+                        ?: return@put call.respond(
+                            HttpStatusCode.BadRequest,
+                            mapOf("error" to "Falta ID de la solicitud")
+                        )
+
+                    val usuario = call.getUserFromToken()
+                        ?: return@put call.respond(
+                            HttpStatusCode.Unauthorized,
+                            mapOf("error" to "Token inválido o expirado")
+                        )
+
+                    if (usuario.rol != "docente") {
+                        return@put call.respond(
+                            HttpStatusCode.Forbidden,
+                            mapOf("error" to "Solo los docentes pueden atender solicitudes")
+                        )
+                    }
+
+                    val solicitud = solicitudPreguntasRepo.obtenerSolicitudPorId(solicitudId)
+                    if (solicitud == null) {
+                        return@put call.respond(
+                            HttpStatusCode.NotFound,
+                            mapOf("error" to "Solicitud no encontrada")
+                        )
+                    }
+
+                    val curso = repo.obtenerCursoPorId(solicitud.cursoId)
+                    if (curso?.docenteId != usuario.uid) {
+                        return@put call.respond(
+                            HttpStatusCode.Forbidden,
+                            mapOf("error" to "No tienes permiso para atender esta solicitud")
+                        )
+                    }
+
+                    solicitudPreguntasRepo.marcarAtendida(solicitudId)
+                    
+                    call.respond(
+                        HttpStatusCode.OK,
+                        mapOf("message" to "Solicitud marcada como atendida")
+                    )
+
+                } catch (e: Exception) {
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al atender solicitud: ${e.message}")
+                    )
+                }
+            }
+
+            put("{id}/temas/{temaId}/solicitudes-preguntas/atender-todas") {
+                try {
+                    val cursoId = call.parameters["id"]
+                        ?: return@put call.respond(
+                            HttpStatusCode.BadRequest,
+                            mapOf("error" to "Falta ID del curso")
+                        )
+                    
+                    val temaId = call.parameters["temaId"]
+                        ?: return@put call.respond(
+                            HttpStatusCode.BadRequest,
+                            mapOf("error" to "Falta ID del tema")
+                        )
+
+                    val usuario = call.getUserFromToken()
+                        ?: return@put call.respond(
+                            HttpStatusCode.Unauthorized,
+                            mapOf("error" to "Token inválido o expirado")
+                        )
+
+                    if (usuario.rol != "docente") {
+                        return@put call.respond(
+                            HttpStatusCode.Forbidden,
+                            mapOf("error" to "Solo los docentes pueden atender solicitudes")
+                        )
+                    }
+
+                    val curso = repo.obtenerCursoPorId(cursoId)
+                    if (curso?.docenteId != usuario.uid) {
+                        return@put call.respond(
+                            HttpStatusCode.Forbidden,
+                            mapOf("error" to "No tienes permiso para atender estas solicitudes")
+                        )
+                    }
+
+                    solicitudPreguntasRepo.marcarAtendidasPorTema(cursoId, temaId)
+                    
+                    call.respond(
+                        HttpStatusCode.OK,
+                        mapOf("message" to "Todas las solicitudes del tema han sido marcadas como atendidas")
+                    )
+
+                } catch (e: Exception) {
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al atender solicitudes: ${e.message}")
+                    )
+                }
+            }
+
+            get("{id}/temas/{temaId}/solicitudes-preguntas/contador") {
+                try {
+                    val cursoId = call.parameters["id"]
+                        ?: return@get call.respond(
+                            HttpStatusCode.BadRequest,
+                            mapOf("error" to "Falta ID del curso")
+                        )
+                    
+                    val temaId = call.parameters["temaId"]
+                        ?: return@get call.respond(
+                            HttpStatusCode.BadRequest,
+                            mapOf("error" to "Falta ID del tema")
+                        )
+
+                    val usuario = call.getUserFromToken()
+                        ?: return@get call.respond(
+                            HttpStatusCode.Unauthorized,
+                            mapOf("error" to "Token inválido o expirado")
+                        )
+
+                    if (usuario.rol != "docente") {
+                        return@get call.respond(
+                            HttpStatusCode.Forbidden,
+                            mapOf("error" to "Solo los docentes pueden ver el contador")
+                        )
+                    }
+
+                    val contador = solicitudPreguntasRepo.contarSolicitudesPorTema(cursoId, temaId)
+                    
+                    call.respond(
+                        HttpStatusCode.OK,
+                        mapOf(
+                            "cursoId" to cursoId,
+                            "temaId" to temaId,
+                            "solicitudesPendientes" to contador
+                        )
+                    )
+
+                } catch (e: Exception) {
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener contador: ${e.message}")
                     )
                 }
             }

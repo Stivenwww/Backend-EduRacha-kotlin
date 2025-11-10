@@ -8,17 +8,22 @@ data class Usuario(
     val nombreCompleto: String = "",
     val correo: String = "",
     val rol: String = "estudiante",
-    val fechaRegistro: Long = 0,
+    val fechaRegistro: Long = System.currentTimeMillis(),
     val apodo: String = "",
-    val perfil: PerfilUsuario = PerfilUsuario() 
-    
+    val perfil: PerfilUsuario = PerfilUsuario()
 )
 
 @Serializable
 data class PerfilUsuario(
-    val cursos: Map<String, PerfilCurso> = emptyMap() // cursoId -> PerfilCurso
+    val cursos: Map<String, PerfilCurso> = emptyMap(), // cursoId -> PerfilCurso
+    val configuraciones: Configuraciones = Configuraciones() 
 )
 
+@Serializable
+data class Configuraciones(
+    val notificaciones: Boolean = true,
+    val tema: String = "claro"
+)
 
 @Serializable
 data class PerfilCurso(
@@ -29,7 +34,9 @@ data class PerfilCurso(
     val progreso: Progreso = Progreso(),
     val experiencia: Int = 0,
     val temasCompletados: Map<String, EstadoTema> = emptyMap(),
-    val proximoQuizDisponible: Long = 0
+    val proximoQuizDisponible: Long = 0,
+    val nivelActual: Int = 1,
+    val experienciaTotal: Int = 0
 )
 
 @Serializable
@@ -41,10 +48,13 @@ data class EstadoTema(
     val aprobado: Boolean = false,
     val fechaPrimerIntento: Long = 0,
     val fechaUltimoIntento: Long = 0,
-    val preguntasVistas: Set<String> = emptySet()
+    val preguntasVistas: Set<String> = emptySet(),
+    val ciclosCompletados: Int = 0,
+    val necesitaMasPreguntas: Boolean = false,
+    val fechaSolicitudMasPreguntas: Long? = null,
+    val ultimoReinicioBanco: Long? = null
 )
 
-// Y también necesitas estos modelos básicos:
 @Serializable
 data class Vidas(
     val actuales: Int = 5,
@@ -55,7 +65,8 @@ data class Vidas(
 @Serializable
 data class Racha(
     val diasConsecutivos: Int = 0,
-    val ultimaFecha: Long = 0
+    val ultimaFecha: Long = 0,
+    val mejorRacha: Int = 0 
 )
 
 @Serializable
