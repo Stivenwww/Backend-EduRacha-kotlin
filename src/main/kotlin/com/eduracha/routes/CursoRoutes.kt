@@ -741,7 +741,7 @@ fun Application.cursoRoutes() {
                         )
                     }
 
-                    val contador = solicitudPreguntasRepo.contarSolicitudesPorT90ema(cursoId, temaId)
+                    val contador = solicitudPreguntasRepo.contarSolicitudesPorTema(cursoId, temaId)
                     
                     call.respond(
                         HttpStatusCode.OK,

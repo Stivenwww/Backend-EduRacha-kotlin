@@ -18,6 +18,10 @@ object OpenAIClient {
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Authorization", "Bearer $apiKey")
             doOutput = true
+
+            // ⏱️ Aumentar tiempos de espera
+            connectTimeout = 180_000  // Espera máxima para conectar (3 min)
+            readTimeout = 300_000     // Espera máxima para leer respuesta (5 min)
         }
 
         val requestBody = """
@@ -44,5 +48,3 @@ object OpenAIClient {
         return content.trim('"')
     }
 }
-
-    
