@@ -12,12 +12,10 @@ object JwtConfig {
     private val algorithm = Algorithm.HMAC256(secret)
     private val verifier: JWTVerifier = JWT.require(algorithm).withIssuer(issuer).build()
 
-    /**
-     * Genera token JWT con uid, email y rol
-     */
+    // Genera token JWT con uid, email y rol
     fun generateToken(uid: String, email: String, rol: String = "estudiante"): String {
         val now = System.currentTimeMillis()
-        val expiration = Date(now + 24 * 60 * 60 * 1000) // 24 horas
+        val expiration = Date(now + 24 * 60 * 60 * 1000)
 
         return JWT.create()
             .withIssuer(issuer)
@@ -29,9 +27,6 @@ object JwtConfig {
             .sign(algorithm)
     }
 
-    /**
-     * Versión simplificada (mantener por compatibilidad)
-     */
     fun generateToken(email: String): String {
         return generateToken("", email, "estudiante")
     }
@@ -44,3 +39,4 @@ object JwtConfig {
         }
     }
 }
+

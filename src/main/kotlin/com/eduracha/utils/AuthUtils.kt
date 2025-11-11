@@ -1,35 +1,43 @@
 package com.eduracha.utils
 
-import com.auth0.jwt.interfaces.DecodedJWT
 import com.eduracha.models.Usuario
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.*
 import io.ktor.server.application.*
+import io.ktor.server.auth.*
+import io.ktor.server.auth.jwt.*
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
-// Datos básicos que vienen del token
 data class UserTokenData(
+    val uid: String,
     val email: String,
-    val rol: String? = null
+    val rol: String? = "estudiante"
 )
 
-// Verifica y decodifica el token JWT
-fun ApplicationCall.getUserTokenData(): UserTokenData? {
+suspend fun ApplicationCall.verifyFirebaseToken(): UserTokenData? {
     val authHeader = request.headers["Authorization"] ?: return null
     if (!authHeader.startsWith("Bearer ")) return null
 
     val token = authHeader.removePrefix("Bearer ").trim()
-    val decoded = JwtConfig.verifyToken(token) ?: return null
 
-    val email = decoded.getClaim("email").asString() ?: return null
-    val rol = decoded.getClaim("rol")?.asString()
+    return try {
+        val firebaseToken = FirebaseAuth.getInstance().verifyIdToken(token)
 
-    return UserTokenData(email, rol)
+        UserTokenData(
+            uid = firebaseToken.uid,
+            email = firebaseToken.email ?: return null,
+            rol = firebaseToken.claims["rol"]?.toString() ?: "estudiante"
+        )
+    } catch (e: Exception) {
+        println("Error verificando token Firebase: ${e.message}")
+        null
+    }
 }
 
-// Obtiene el usuario completo desde Firebase usando el correo del token
 suspend fun ApplicationCall.getUserFromToken(): Usuario? {
-    val tokenData = getUserTokenData() ?: return null
+    val tokenData = verifyFirebaseToken() ?: return null
+
     return try {
         val database = FirebaseDatabase.getInstance()
         suspendCancellableCoroutine { cont ->
@@ -50,12 +58,11 @@ suspend fun ApplicationCall.getUserFromToken(): Usuario? {
                 })
         }
     } catch (e: Exception) {
-        println("Error en getUserFromToken: ${e.message}")
+        println("Excepción en getUserFromToken: ${e.message}")
         null
     }
 }
 
-// Obtiene el usuario directamente si ya conoces su UID
 suspend fun ApplicationCall.getUserByUid(uid: String): Usuario? {
     return try {
         val database = FirebaseDatabase.getInstance()
@@ -73,7 +80,7 @@ suspend fun ApplicationCall.getUserByUid(uid: String): Usuario? {
                 })
         }
     } catch (e: Exception) {
-        println("Error en getUserByUid: ${e.message}")
+        println("Excepción en getUserByUid: ${e.message}")
         null
     }
 }

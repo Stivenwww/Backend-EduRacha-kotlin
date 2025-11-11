@@ -19,6 +19,12 @@ import com.eduracha.utils.getUserFromToken
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 
+
+import io.ktor.server.auth.*
+import io.ktor.server.auth.jwt.*
+import com.auth0.jwt.JWT
+import com.auth0.jwt.algorithms.Algorithm
+
 fun main() {
     embeddedServer(Netty, port = 8080, module = Application::module)
         .start(wait = true)
@@ -43,39 +49,55 @@ fun Application.module() {
 
     FirebaseInit.initialize(credentialsPath, firebaseUrl)
 
-    // Inicializar repositorios y servicios
-val preguntaRepo = PreguntaRepository()
-val quizRepo = QuizRepository()
-val cursoRepo = CursoRepository()
-val solicitudPreguntasRepo = SolicitudPreguntasRepository() 
+    // Repos
+    val preguntaRepo = PreguntaRepository()
+    val quizRepo = QuizRepository()
+    val cursoRepo = CursoRepository()
+    val solicitudPreguntasRepo = SolicitudPreguntasRepository()
 
-// Servicios
-val servicioSeleccion = ServicioSeleccionPreguntas(
-    preguntaRepo = preguntaRepo,
-    cursoRepo = cursoRepo 
-)
-// Servicio de Quiz
-val quizService = QuizService(
-    quizRepo = quizRepo,
-    preguntaRepo = preguntaRepo,
-    cursoRepo = cursoRepo,
-    servicioSeleccion = servicioSeleccion,
-    solicitudPreguntasRepo = solicitudPreguntasRepo 
-)
-// Servicio de Reportes
-val servicioReportes = ServicioReportesExcel(quizRepo, cursoRepo) 
+    // Servicios
+    val servicioSeleccion = ServicioSeleccionPreguntas(
+        preguntaRepo = preguntaRepo,
+        cursoRepo = cursoRepo
+    )
 
-    
+    val quizService = QuizService(
+        quizRepo = quizRepo,
+        preguntaRepo = preguntaRepo,
+        cursoRepo = cursoRepo,
+        servicioSeleccion = servicioSeleccion,
+        solicitudPreguntasRepo = solicitudPreguntasRepo
+    )
+
+    val servicioReportes = ServicioReportesExcel(quizRepo, cursoRepo)
+
     install(ContentNegotiation) {
         json()
     }
-    
+
+    // Jwt dummy solo p/compilar y permitir authenticate()
+    install(Authentication) {
+        jwt("auth-jwt") {
+            verifier {
+                JWT
+                    .require(Algorithm.HMAC256("dummy-secret"))
+                    .build()
+            }
+            validate { credential ->
+                JWTPrincipal(credential.payload)
+            }
+            challenge { _, _ ->
+                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token inválido"))
+            }
+        }
+    }
+
     routing {
         get("/") {
             call.respondText("Servidor EduRacha corriendo correctamente")
         }
 
-        // Rutas principales
+    
         authRoutes()
         usuarioRoutes()
         cursoRoutes()
@@ -85,33 +107,33 @@ val servicioReportes = ServicioReportesExcel(quizRepo, cursoRepo)
         quizRoutes(quizService)
         reportesRoutes(servicioReportes)
     }
-    
-    // Configurar cron jobs
+
     configureCronJobs(servicioReportes, cursoRepo)
 }
 
 fun Application.configureCronJobs(servicioReportes: ServicioReportesExcel, cursoRepo: CursoRepository) {
     val cronJob = CronJobReportes(servicioReportes, cursoRepo)
-    
+
     cronJob.iniciar()
-    
+
     environment.monitor.subscribe(ApplicationStopped) {
         cronJob.detener()
     }
-    
+
     routing {
         post("/admin/generar-reportes") {
             val user = call.getUserFromToken()
                 ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token inválido o expirado"))
-        if (user.rol != "admin" && user.rol != "docente") {
+
+            if (user.rol != "admin" && user.rol != "docente") {
                 call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Acceso denegado"))
                 return@post
             }
-            
+
             GlobalScope.launch {
                 cronJob.ejecutarManualmente()
             }
-            
+
             call.respond(HttpStatusCode.OK, mapOf("message" to "Generación de reportes iniciada"))
         }
     }
