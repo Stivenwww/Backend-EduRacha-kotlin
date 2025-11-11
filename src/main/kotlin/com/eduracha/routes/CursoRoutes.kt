@@ -2,6 +2,7 @@ package com.eduracha.routes
 
 import com.eduracha.models.Curso
 import com.eduracha.models.Tema
+import com.eduracha.models.ProgramacionTema
 import com.eduracha.repository.CursoRepository
 import com.eduracha.repository.ExplicacionRepository
 import com.eduracha.repository.SolicitudPreguntasRepository
@@ -21,7 +22,8 @@ import kotlinx.serialization.Serializable
 data class TemaConExplicacionRequest(
     val tema: Tema,
     val explicacion: String? = null,
-    val generarConIA: Boolean = false
+    val generarConIA: Boolean = false,
+    val programacion: ProgramacionTema? = null
 )
 
 @Serializable
@@ -195,26 +197,27 @@ fun Application.cursoRoutes() {
 
                 try {
                     val request = call.receive<TemaConExplicacionRequest>()
+                    val temaConProgramacion = request.tema.copy(programacion = request.programacion)
 
                     if (!request.explicacion.isNullOrBlank() && !request.generarConIA) {
                         val temaId = repo.agregarTemaConExplicacion(
                             cursoId = cursoId,
-                            tema = request.tema,
+                            tema = temaConProgramacion,
                             explicacion = request.explicacion
                         )
-                            explicacionRepo.actualizarExplicacion(
-                                cursoId = cursoId,
-                                temaId = temaId,
-                                explicacion = request.explicacion,
-                                fuente = "docente",
-                                estado = "pendiente"
-                            )
+                        explicacionRepo.actualizarExplicacion(
+                            cursoId = cursoId,
+                            temaId = temaId,
+                            explicacion = request.explicacion,
+                            fuente = "docente",
+                            estado = "pendiente"
+                        )
                         val temaCreado = repo.obtenerTema(cursoId, temaId)
 
                         call.respond(
                             HttpStatusCode.Created,
                             TemaResponse(
-                                 message = "Tema creado con explicación. La explicación está en revisión antes de poder generar preguntas.",
+                                message = "Tema creado con explicación. La explicación está en revisión antes de poder generar preguntas.",
                                 temaId = temaId,
                                 tema = temaCreado!!,
                                 requiereValidacion = true
@@ -229,7 +232,7 @@ fun Application.cursoRoutes() {
                             )
                         }
 
-                        val temaId = repo.agregarTema(cursoId, request.tema)
+                        val temaId = repo.agregarTema(cursoId, temaConProgramacion)
 
                         val explicacionGenerada = iaService.generarExplicacion(
                             cursoId = cursoId,
@@ -259,7 +262,7 @@ fun Application.cursoRoutes() {
                         )
                     }
                     else {
-                        val temaId = repo.agregarTema(cursoId, request.tema)
+                        val temaId = repo.agregarTema(cursoId, temaConProgramacion)
                         val temaCreado = repo.obtenerTema(cursoId, temaId)
 
                         call.respond(
@@ -738,7 +741,7 @@ fun Application.cursoRoutes() {
                         )
                     }
 
-                    val contador = solicitudPreguntasRepo.contarSolicitudesPorTema(cursoId, temaId)
+                    val contador = solicitudPreguntasRepo.contarSolicitudesPorT90ema(cursoId, temaId)
                     
                     call.respond(
                         HttpStatusCode.OK,

@@ -13,7 +13,8 @@ data class Tema(
     val explicacion: String? = null,
     val explicacionFuente: String? = null, // "ia" o "docente"
     val explicacionUltimaActualizacion: String? = null,
-    val explicacionEstado: String? = null // "pendiente", "aprobada", "rechazada"
+    val explicacionEstado: String? = null, // "pendiente", "aprobada", "rechazada"
+    val programacion: ProgramacionTema? = null
 )
 
 @Serializable
@@ -24,13 +25,12 @@ data class Curso(
     val descripcion: String = "",
     val docenteId: String = "",
     val duracionDias: Int = 0,
-     val fechaInicio: Long = 0, // Timestamp de inicio
-    val fechaFin: Long = 0, // Timestamp de fin
+    val fechaInicio: Long = 0,
+    val fechaFin: Long = 0,
     val temas: Map<String, Tema>? = null,
-     val programacion: ProgramacionCurso? = null, 
+    val programacion: ProgramacionCurso? = null,
     val estado: String = "",
-    val fechaCreacion: String = "",
-
+    val fechaCreacion: String = ""
 )
 
 @Serializable
@@ -49,7 +49,6 @@ data class RangoTema(
     val diasAsignados: Int = 0
 )
 
-// Request para generar explicación con IA
 @Serializable
 data class GenerarExplicacionRequest(
     val cursoId: String,
@@ -58,18 +57,25 @@ data class GenerarExplicacionRequest(
     val contenidoTema: String? = null
 )
 
-// Request para actualizar explicación manualmente
 @Serializable
 data class ActualizarExplicacionRequest(
     val explicacion: String,
     val fuente: String = "docente"
 )
 
-// Response para explicación generada
 @Serializable
 data class ExplicacionResponse(
     val message: String,
     val explicacion: String,
     val fuente: String,
     val tema: Tema
+)
+
+@Serializable
+data class ProgramacionTema(
+    val objetivos: String? = null,
+    val conceptosClave: String? = null,
+    val ejemplos: String? = null,
+    val pseudocodigo: String? = null,
+    val codigo: String? = null
 )
