@@ -2,6 +2,7 @@ package com.eduracha.services
 
 import io.ktor.client.*
 import io.ktor.client.request.*
+import io.ktor.client.engine.cio.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.serialization.*
@@ -9,6 +10,8 @@ import kotlinx.serialization.json.*
 import com.google.firebase.database.FirebaseDatabase
 import java.time.Instant
 import java.util.UUID
+import kotlin.time.Duration.Companion.seconds
+
 
 @Serializable
 data class PreguntaAI(
@@ -97,11 +100,24 @@ class OpenAIService(private val client: HttpClient, private val openAiApiKey: St
             temperature = 0.7,
             max_tokens = 2000
         )
+    val client = HttpClient(CIO) {
+    engine {
+        requestTimeout = 300_000 // 5 minutos (en milisegundos)
+        endpoint {
+            connectTimeout = 180_000 // 3 minutos
+            keepAliveTime = 5000
+            connectAttempts = 5
+        }
+    }
+}
+
+
 
         val response = client.post("https://api.openai.com/v1/chat/completions") {
             header(HttpHeaders.Authorization, "Bearer $openAiApiKey")
             contentType(ContentType.Application.Json)
             setBody(json.encodeToString(request))
+    
         }
 
         val respText = response.bodyAsText()
@@ -196,8 +212,21 @@ class OpenAIService(private val client: HttpClient, private val openAiApiKey: St
                 ChatMessage("user", userPrompt)
             ),
             temperature = 0.2,
-            max_tokens = 1200
+            max_tokens = 4000
         )
+ val client = HttpClient(CIO) {
+    engine {
+        requestTimeout = 300_000 // 5 minutos (en milisegundos)
+        endpoint {
+            connectTimeout = 180_000 // 3 minutos
+            keepAliveTime = 5000
+            connectAttempts = 5
+        }
+    }
+}
+
+
+
 
         val response = client.post("https://api.openai.com/v1/chat/completions") {
             header(HttpHeaders.Authorization, "Bearer $openAiApiKey")

@@ -58,14 +58,25 @@ fun Application.cursoRoutes() {
     val repo = CursoRepository()
     val explicacionRepo = ExplicacionRepository()
     val solicitudPreguntasRepo = SolicitudPreguntasRepository()
-    
+
     val dotenv = dotenv()
     val openAiKey = dotenv["OPENAI_API_KEY"]
-    val client = HttpClient(CIO)
+
+    val client = HttpClient(CIO) {
+        engine {
+            requestTimeout = 600_000 // 10 minutos de espera total
+        }
+        install(io.ktor.client.plugins.HttpTimeout) {
+            connectTimeoutMillis = 180_000 // 3 minutos para conectar
+            requestTimeoutMillis = 600_000 // 10 minutos para completar toda la solicitud
+            socketTimeoutMillis = 600_000  // 10 minutos para recibir respuesta
+        }
+    }
+
     val iaService = if (!openAiKey.isNullOrEmpty()) {
         OpenAIService(client, openAiKey)
     } else null
-
+    
     routing {
         route("/api/cursos") {
 
