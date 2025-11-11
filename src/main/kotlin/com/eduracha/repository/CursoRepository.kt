@@ -147,8 +147,8 @@ class CursoRepository {
             id = temaId,
             fechaCreacion = timestamp,
             explicacion = explicacion,
-            explicacionFuente = "docente",
-            explicacionEstado = "aprobada",
+            explicacionFuente = "",
+            explicacionEstado = "pendiente",
             explicacionUltimaActualizacion = timestamp
         )
 

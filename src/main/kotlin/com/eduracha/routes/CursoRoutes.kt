@@ -202,15 +202,22 @@ fun Application.cursoRoutes() {
                             tema = request.tema,
                             explicacion = request.explicacion
                         )
+                            explicacionRepo.actualizarExplicacion(
+                                cursoId = cursoId,
+                                temaId = temaId,
+                                explicacion = request.explicacion,
+                                fuente = "docente",
+                                estado = "pendiente"
+                            )
                         val temaCreado = repo.obtenerTema(cursoId, temaId)
 
                         call.respond(
                             HttpStatusCode.Created,
                             TemaResponse(
-                                message = "Tema creado con explicación manual. Explicación aprobada automáticamente. Puedes generar preguntas.",
+                                 message = "Tema creado con explicación. La explicación está en revisión antes de poder generar preguntas.",
                                 temaId = temaId,
                                 tema = temaCreado!!,
-                                requiereValidacion = false
+                                requiereValidacion = true
                             )
                         )
                     }
