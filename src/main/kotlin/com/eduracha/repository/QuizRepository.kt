@@ -6,16 +6,15 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import java.time.Instant
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import kotlin.math.min
 
 class QuizRepository {
 
     private val database = FirebaseDatabase.getInstance()
     private val refQuizzes = database.getReference("quizzes")
-    private val refInscripciones = database.getReference("inscripciones")
     private val refCursos = database.getReference("cursos")
 
-    // Crear un nuevo quiz
+    //GESTIÓN DE QUIZZES 
+
     suspend fun crearQuiz(quiz: Quiz): String = suspendCancellableCoroutine { cont ->
         val nuevoRef = refQuizzes.push()
         val id = nuevoRef.key ?: return@suspendCancellableCoroutine cont.resumeWithException(
@@ -34,7 +33,6 @@ class QuizRepository {
         })
     }
 
-    // Obtener un quiz por ID
     suspend fun obtenerQuizPorId(quizId: String): Quiz? = suspendCancellableCoroutine { cont ->
         refQuizzes.child(quizId)
             .addListenerForSingleValueEvent(object : ValueEventListener {
@@ -48,7 +46,6 @@ class QuizRepository {
             })
     }
 
-    // Actualizar quiz completo
     suspend fun actualizarQuiz(quiz: Quiz) = suspendCancellableCoroutine<Unit> { cont ->
         quiz.id?.let { id ->
             refQuizzes.child(id)
@@ -59,13 +56,16 @@ class QuizRepository {
         } ?: cont.resumeWithException(Exception("Quiz sin ID"))
     }
 
-    // Obtener inscripción del estudiante
-    suspend fun obtenerInscripcion(cursoId: String, userId: String): Inscripcion? =
+    suspend fun obtenerQuizzesPorEstudiante(estudianteId: String, cursoId: String? = null): List<Quiz> =
         suspendCancellableCoroutine { cont ->
-            refInscripciones.child(cursoId).child(userId)
+            refQuizzes.orderByChild("estudianteId").equalTo(estudianteId)
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
-                        cont.resume(snapshot.getValue(Inscripcion::class.java))
+                        val quizzes = snapshot.children.mapNotNull {
+                            it.getValue(Quiz::class.java)
+                        }.filter { cursoId == null || it.cursoId == cursoId }
+
+                        cont.resume(quizzes)
                     }
 
                     override fun onCancelled(error: DatabaseError) {
@@ -74,17 +74,8 @@ class QuizRepository {
                 })
         }
 
-    // Actualizar inscripción (vidas, intentos, etc.)
-    suspend fun actualizarInscripcion(cursoId: String, inscripcion: Inscripcion) =
-        suspendCancellableCoroutine<Unit> { cont ->
-            refInscripciones.child(cursoId).child(inscripcion.userId)
-                .setValue(inscripcion, DatabaseReference.CompletionListener { error, _ ->
-                    if (error != null) cont.resumeWithException(Exception(error.message))
-                    else cont.resume(Unit)
-                })
-        }
+    //VERIFICACIONES
 
-    // Verificar si el tema pertenece al curso
     suspend fun verificarTemaEnCurso(cursoId: String, temaId: String): Boolean =
         suspendCancellableCoroutine { cont ->
             refCursos.child(cursoId).child("temas").child(temaId)
@@ -99,7 +90,6 @@ class QuizRepository {
                 })
         }
 
-    // Verificar si vio la explicación
     suspend fun verificarExplicacionVista(userId: String, temaId: String): Boolean =
         suspendCancellableCoroutine { cont ->
             database.getReference("explicacion_vista")
@@ -117,7 +107,6 @@ class QuizRepository {
                 })
         }
 
-    // Marcar explicación como vista
     suspend fun marcarExplicacionVista(userId: String, temaId: String) =
         suspendCancellableCoroutine<Unit> { cont ->
             val data = mapOf(
@@ -134,7 +123,6 @@ class QuizRepository {
                 })
         }
 
-    // Verificar si es la primera vez que aprueba el tema
     suspend fun esPrimeraVezAprobado(userId: String, cursoId: String, temaId: String): Boolean =
         suspendCancellableCoroutine { cont ->
             refQuizzes.orderByChild("estudianteId").equalTo(userId)
@@ -157,46 +145,12 @@ class QuizRepository {
                 })
         }
 
-    // Regenerar vidas automáticamente
-    suspend fun regenerarVidas(cursoId: String, inscripcion: Inscripcion, vidaRegenMinutos: Int): Inscripcion {
-        val ahora = System.currentTimeMillis()
-        val minutosPasados = (ahora - inscripcion.ultimaRegen) / (1000 * 60)
-        val vidasRecuperadas = (minutosPasados / vidaRegenMinutos).toInt()
-
-        return if (vidasRecuperadas > 0) {
-            inscripcion.copy(
-                vidasActuales = min(inscripcion.vidasMax, inscripcion.vidasActuales + vidasRecuperadas),
-                ultimaRegen = ahora
-            )
-        } else {
-            inscripcion
-        }
-    }
-
-    // Obtener quizzes por estudiante
-    suspend fun obtenerQuizzesPorEstudiante(estudianteId: String, cursoId: String? = null): List<Quiz> =
-        suspendCancellableCoroutine { cont ->
-            refQuizzes.orderByChild("estudianteId").equalTo(estudianteId)
-                .addListenerForSingleValueEvent(object : ValueEventListener {
-                    override fun onDataChange(snapshot: DataSnapshot) {
-                        val quizzes = snapshot.children.mapNotNull {
-                            it.getValue(Quiz::class.java)
-                        }.filter { cursoId == null || it.cursoId == cursoId }
-
-                        cont.resume(quizzes)
-                    }
-
-                    override fun onCancelled(error: DatabaseError) {
-                        cont.resumeWithException(error.toException())
-                    }
-                })
-        }
-
-    // ========== GESTIÓN DE ESTADO DE TEMAS ==========
+    //  GESTIÓN DE ESTADO DE TEMAS
+    // apunta a usuarios/{uid}/cursos/{cursoId}/temasCompletados/{temaId}
 
     suspend fun obtenerEstadoTema(uid: String, cursoId: String, temaId: String): EstadoTema? = 
         suspendCancellableCoroutine { cont ->
-            database.getReference("usuarios/$uid/perfil/cursos/$cursoId/temasCompletados/$temaId")
+            database.getReference("usuarios/$uid/cursos/$cursoId/temasCompletados/$temaId")
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
                         cont.resume(snapshot.getValue(EstadoTema::class.java))
@@ -214,7 +168,7 @@ class QuizRepository {
         temaId: String, 
         estado: EstadoTema
     ) = suspendCancellableCoroutine<Unit> { cont ->
-        database.getReference("usuarios/$uid/perfil/cursos/$cursoId/temasCompletados/$temaId")
+        database.getReference("usuarios/$uid/cursos/$cursoId/temasCompletados/$temaId")
             .setValue(estado) { error, _ ->
                 if (error != null) cont.resumeWithException(error.toException())
                 else cont.resume(Unit)
@@ -223,10 +177,49 @@ class QuizRepository {
 
     suspend fun obtenerPerfilCurso(uid: String, cursoId: String): PerfilCurso? =
         suspendCancellableCoroutine { cont ->
-            database.getReference("usuarios/$uid/perfil/cursos/$cursoId")
+            database.getReference("usuarios/$uid/cursos/$cursoId")
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
-                        cont.resume(snapshot.getValue(PerfilCurso::class.java))
+                        // Construir PerfilCurso desde la estructura plana
+                        val progreso = snapshot.child("progreso").value as? Map<String, Any?>
+                        val temasCompletadosSnapshot = snapshot.child("temasCompletados")
+                        
+                        if (progreso == null) {
+                            cont.resume(null)
+                            return
+                        }
+
+                        val temasCompletados = mutableMapOf<String, EstadoTema>()
+                        temasCompletadosSnapshot.children.forEach { temaSnap ->
+                            val temaId = temaSnap.key ?: return@forEach
+                            val estadoTema = temaSnap.getValue(EstadoTema::class.java) ?: return@forEach
+                            temasCompletados[temaId] = estadoTema
+                        }
+
+                        val perfilCurso = PerfilCurso(
+                            cursoId = progreso["cursoId"] as? String ?: "",
+                            vidas = Vidas(
+                                actuales = (progreso["vidas"] as? Number)?.toInt() ?: 5,
+                                max = (progreso["vidasMax"] as? Number)?.toInt() ?: 5,
+                                ultimaRegen = (progreso["ultimaRegen"] as? Number)?.toLong() ?: 0
+                            ),
+                            racha = Racha(
+                                diasConsecutivos = (progreso["diasConsecutivos"] as? Number)?.toInt() ?: 0,
+                                ultimaFecha = (progreso["ultimaFecha"] as? Number)?.toLong() ?: 0,
+                                mejorRacha = (progreso["mejorRacha"] as? Number)?.toInt() ?: 0
+                            ),
+                            progreso = Progreso(
+                                porcentaje = (progreso["porcentaje"] as? Number)?.toInt() ?: 0,
+                                temasCompletados = (progreso["temasCompletados"] as? Number)?.toInt() ?: 0,
+                                quizzesCompletados = (progreso["quizzesCompletados"] as? Number)?.toInt() ?: 0,
+                                practicasCompletadas = (progreso["practicasCompletadas"] as? Number)?.toInt() ?: 0,
+                                ultimaActividad = (progreso["ultimaActividad"] as? Number)?.toLong() ?: 0
+                            ),
+                            experiencia = (progreso["experiencia"] as? Number)?.toInt() ?: 0,
+                            temasCompletados = temasCompletados
+                        )
+
+                        cont.resume(perfilCurso)
                     }
 
                     override fun onCancelled(error: DatabaseError) {
@@ -241,7 +234,7 @@ class QuizRepository {
         temaId: String,
         estado: EstadoTema
     ) = suspendCancellableCoroutine<Unit> { cont ->
-        database.getReference("usuarios/$uid/perfil/cursos/$cursoId/temasCompletados/$temaId")
+        database.getReference("usuarios/$uid/cursos/$cursoId/temasCompletados/$temaId")
             .setValue(estado) { error, _ ->
                 if (error != null) cont.resumeWithException(error.toException())
                 else cont.resume(Unit)

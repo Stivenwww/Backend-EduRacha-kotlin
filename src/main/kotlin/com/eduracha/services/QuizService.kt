@@ -24,8 +24,7 @@ class QuizService(
         const val PORCENTAJE_APROBACION = 80
     }
 
-    // INICIAR QUIZ CON LAS 3 VALIDACIONES
-    
+    //  INICIAR QUIZ 
     suspend fun iniciarQuiz(cursoId: String, temaId: String, userId: String): IniciarQuizResponse {
         // 1. Obtener curso y programación
         val curso = cursoRepo.obtenerCursoPorId(cursoId)
@@ -34,16 +33,11 @@ class QuizService(
         val programacion = curso.programacion
             ?: throw IllegalStateException("El curso no tiene programación configurada")
 
-        // 2. Verificar inscripción
-        val inscripcion = quizRepo.obtenerInscripcion(cursoId, userId)
+        // 2.  Verificar progreso 
+        val progreso = ServicioProgreso.obtenerProgreso(userId, cursoId)
             ?: throw IllegalStateException("No estás inscrito en este curso")
 
-        if (inscripcion.estado != "aprobado" && inscripcion.estado != "en_progreso") {
-            throw IllegalStateException("Estado de inscripción inválido")
-        }
-
-        // VALIDACIÓN 1: VERIFICAR PREGUNTAS MÍNIMAS
-        
+        // 3. Validación mínimo de preguntas
         val validacionMinimo = servicioSeleccion.puedePublicarTema(cursoId, temaId)
         if (!validacionMinimo.permitido) {
             throw IllegalStateException(
@@ -51,10 +45,10 @@ class QuizService(
             )
         }
 
-        // 3. Obtener estado del tema
+        // 4. Obtener estado del tema
         val estadoTema = obtenerEstadoTema(cursoId, temaId, userId)
 
-        // 4. Validar programación
+        // 5. Validar programación
         val validacion = ServicioProgramacionCurso.puedeRealizarQuiz(
             cursoId = cursoId,
             temaId = temaId,
@@ -67,25 +61,27 @@ class QuizService(
             throw IllegalStateException(validacion.mensaje)
         }
 
-        // 5. Regenerar vidas
-        val inscripcionActualizada = quizRepo.regenerarVidas(cursoId, inscripcion, VIDA_REGEN_MINUTOS)
-        if (inscripcionActualizada.vidasActuales != inscripcion.vidasActuales) {
-            quizRepo.actualizarInscripcion(cursoId, inscripcionActualizada)
+        // 6.  Regenerar vidas ANTES de verificar
+        ServicioProgreso.regenerarVidas(userId, cursoId, VIDA_REGEN_MINUTOS)
+        
+        // Obtener progreso actualizado
+        val progresoActualizado = ServicioProgreso.obtenerProgreso(userId, cursoId)
+            ?: throw IllegalStateException("Error al obtener progreso")
+
+        val vidasActuales = (progresoActualizado["vidas"] as? Number)?.toInt() ?: 5
+
+        // 7. Verificar vidas
+        if (vidasActuales <= 0) {
+            throw IllegalStateException("No tienes vidas disponibles. Espera $VIDA_REGEN_MINUTOS minutos para recuperar una vida.")
         }
 
-        // 6. Verificar vidas
-        if (inscripcionActualizada.vidasActuales <= 0) {
-            throw IllegalStateException("No tienes vidas disponibles. Espera ${VIDA_REGEN_MINUTOS} minutos para recuperar una vida.")
-        }
-
-        // 7. Verificar explicación vista
+        // 8. Verificar explicación vista
         val vioExplicacion = quizRepo.verificarExplicacionVista(userId, temaId)
         if (!vioExplicacion) {
             throw IllegalStateException("Debes ver la explicación antes de iniciar el quiz")
         }
 
-        // VALIDACIÓN 2: VERIFICAR SI AGOTÓ PREGUNTAS
-        
+        // 9. Validar preguntas disponibles
         val preguntasYaVistas = estadoTema?.preguntasVistas ?: emptySet()
         
         val agotoBanco = servicioSeleccion.estudianteVioTodasLasPreguntas(
@@ -93,35 +89,12 @@ class QuizService(
         )
         
         if (agotoBanco) {
-            // VALIDACIÓN 3: CREAR SOLICITUD AL DOCENTE
-            
             val existeSolicitud = solicitudPreguntasRepo.existeSolicitudPendiente(
                 cursoId, temaId, userId
             )
             
             if (!existeSolicitud) {
-                val estudiante = obtenerDatosEstudiante(cursoId, userId)
-                val tema = cursoRepo.obtenerTema(cursoId, temaId)
-                
-                val solicitud = SolicitudMasPreguntas(
-                    cursoId = cursoId,
-                    temaId = temaId,
-                    tituloTema = tema?.titulo ?: "Sin título",
-                    estudianteId = userId,
-                    estudianteNombre = estudiante?.nombre ?: "Desconocido",
-                    estudianteEmail = estudiante?.email,
-                    preguntasActuales = preguntasYaVistas.size,
-                    preguntasVistas = preguntasYaVistas.size,
-                    mensaje = "El estudiante ha completado todas las preguntas disponibles del tema.",
-                    prioridad = determinarPrioridad(estadoTema)
-                )
-                
-                try {
-                    solicitudPreguntasRepo.crearSolicitud(solicitud)
-                    actualizarFlagNecesitaMasPreguntas(cursoId, temaId, userId, true)
-                } catch (e: Exception) {
-                    println(" Error al crear solicitud: ${e.message}")
-                }
+                crearSolicitudMasPreguntas(cursoId, temaId, userId, estadoTema, preguntasYaVistas)
             }
             
             throw IllegalStateException(
@@ -130,9 +103,7 @@ class QuizService(
             )
         }
 
-
-        // SELECCIÓN DE PREGUNTAS
-        
+        // 10. Seleccionar preguntas
         val preguntasSeleccionadas = servicioSeleccion.seleccionarPreguntasParaQuiz(
             cursoId = cursoId,
             temaId = temaId,
@@ -142,116 +113,130 @@ class QuizService(
         )
 
         if (preguntasSeleccionadas.isEmpty()) {
-            val preguntasFallback = preguntaRepo.obtenerPreguntasPorCursoYEstado(cursoId, "aprobada")
-                .filter { it.temaId == temaId }
-                .shuffled()
-                .take(10)
-
-            if (preguntasFallback.isEmpty()) {
-                throw IllegalStateException("No hay preguntas disponibles para este tema")
-            }
-
-            return crearYResponderQuiz(cursoId, temaId, userId, preguntasFallback, estadoTema)
+            throw IllegalStateException("No hay preguntas disponibles para este tema")
         }
 
         return crearYResponderQuiz(cursoId, temaId, userId, preguntasSeleccionadas, estadoTema)
     }
 
-    // FINALIZAR QUIZ
-    
-suspend fun finalizarQuiz(
-    quizId: String,
-    respuestas: List<RespuestaUsuario>,
-    userId: String
-): FinalizarQuizResponse {
-    val quiz = quizRepo.obtenerQuizPorId(quizId)
-        ?: throw IllegalStateException("Quiz no encontrado")
+    // FINALIZAR QUIZ - usuarios/cursos/progreso
+    suspend fun finalizarQuiz(
+        quizId: String,
+        respuestas: List<RespuestaUsuario>,
+        userId: String
+    ): FinalizarQuizResponse {
+        val quiz = quizRepo.obtenerQuizPorId(quizId)
+            ?: throw IllegalStateException("Quiz no encontrado")
 
-    if (quiz.estudianteId != userId) {
-        throw IllegalStateException("No tienes permiso para finalizar este quiz")
-    }
+        if (quiz.estudianteId != userId) {
+            throw IllegalStateException("No tienes permiso para finalizar este quiz")
+        }
 
-    if (quiz.estado != "en_progreso") {
-        throw IllegalStateException("Este quiz ya fue finalizado")
-    }
+        if (quiz.estado != "en_progreso") {
+            throw IllegalStateException("Este quiz ya fue finalizado")
+        }
 
-    // Evaluar respuestas
-    val respuestasEvaluadas = evaluarRespuestas(quiz, respuestas)
-    val correctas = respuestasEvaluadas.count { it.esCorrecta }
-    val incorrectas = respuestasEvaluadas.size - correctas
+        // Evaluar respuestas
+        val respuestasEvaluadas = evaluarRespuestas(quiz, respuestas)
+        val correctas = respuestasEvaluadas.count { it.esCorrecta }
+        val incorrectas = respuestasEvaluadas.size - correctas
 
-    val tiempoTotal = respuestas.sumOf { it.tiempoSeg }
-    val tiempoPromedio = if (respuestas.isNotEmpty()) tiempoTotal.toDouble() / respuestas.size else 0.0
+        val tiempoTotal = respuestas.sumOf { it.tiempoSeg }
+        val tiempoPromedio = if (respuestas.isNotEmpty()) tiempoTotal.toDouble() / respuestas.size else 0.0
 
-    val porcentaje = if (respuestas.isNotEmpty()) (correctas * 100) / respuestas.size else 0
-    val aprobado = porcentaje >= PORCENTAJE_APROBACION
+        val porcentaje = if (respuestas.isNotEmpty()) (correctas * 100) / respuestas.size else 0
+        val aprobado = porcentaje >= PORCENTAJE_APROBACION
 
-    val xpBase = correctas * XP_POR_RESPUESTA_CORRECTA
-    val bonRapidez = if (tiempoPromedio < UMBRAL_RAPIDEZ_SEG) BONIFICACION_RAPIDEZ else 0
-    val bonPerfect = if (incorrectas == 0 && correctas > 0) BONIFICACION_TODO_CORRECTO else 0
+        // Calcular experiencia
+        val xpBase = correctas * XP_POR_RESPUESTA_CORRECTA
+        val bonRapidez = if (tiempoPromedio < UMBRAL_RAPIDEZ_SEG) BONIFICACION_RAPIDEZ else 0
+        val bonPerfect = if (incorrectas == 0 && correctas > 0) BONIFICACION_TODO_CORRECTO else 0
 
-    val esPrimeraVez = quizRepo.esPrimeraVezAprobado(userId, quiz.cursoId, quiz.temaId)
-    val bonPrimera = if (esPrimeraVez && aprobado) BONIFICACION_PRIMERA_VEZ else 0
+        val esPrimeraVez = quizRepo.esPrimeraVezAprobado(userId, quiz.cursoId, quiz.temaId)
+        val bonPrimera = if (esPrimeraVez && aprobado) BONIFICACION_PRIMERA_VEZ else 0
 
-    val xpTotal = xpBase + bonRapidez + bonPrimera + bonPerfect
+        val xpTotal = xpBase + bonRapidez + bonPrimera + bonPerfect
 
-    val inscripcion = quizRepo.obtenerInscripcion(quiz.cursoId, userId)
-        ?: throw IllegalStateException("Inscripción no encontrada")
+        // Obtener vidas actuales desde progreso
+        val progreso = ServicioProgreso.obtenerProgreso(userId, quiz.cursoId)
+            ?: throw IllegalStateException("Progreso no encontrado")
 
-    val nuevasVidas = max(0, inscripcion.vidasActuales - incorrectas)
-    val inscripcionActualizada = inscripcion.copy(
-        vidasActuales = nuevasVidas,
-        intentosHechos = inscripcion.intentosHechos + 1
-    )
-    quizRepo.actualizarInscripcion(quiz.cursoId, inscripcionActualizada)
+        val vidasActuales = (progreso["vidas"] as? Number)?.toInt() ?: 5
+        val nuevasVidas = max(0, vidasActuales - incorrectas)
 
-    val quizFinalizado = quiz.copy(
-        fin = Instant.now().toString(),
-        tiempoUsadoSeg = tiempoTotal,
-        tiempoPromedioPorPregunta = tiempoPromedio,
-        preguntasCorrectas = correctas,
-        preguntasIncorrectas = incorrectas,
-        experienciaGanada = xpTotal,
-        bonificacionRapidez = bonRapidez,
-        bonificacionPrimeraVez = bonPrimera,
-        bonificacionTodoCorrecto = bonPerfect,
-        estado = "finalizado",
-        respuestas = respuestasEvaluadas
-    )
-    quizRepo.actualizarQuiz(quizFinalizado)
-
-    actualizarEstadoTema(
-        cursoId = quiz.cursoId,
-        temaId = quiz.temaId,
-        estudianteId = userId,
-        porcentaje = porcentaje,
-        aprobado = aprobado,
-        preguntasIds = quiz.preguntas.map { it.preguntaId }
-    )
-
-    ServicioProgreso.actualizarProgresoQuiz(
-        usuarioId = userId,
-        cursoId = quiz.cursoId,
-        xpGanado = xpTotal,  
-        vidasPerdidas = incorrectas,
-        aprobado = aprobado
-    )
-
-    return FinalizarQuizResponse(
-        preguntasCorrectas = correctas,
-        preguntasIncorrectas = incorrectas,
-        experienciaGanada = xpTotal,
-        vidasRestantes = nuevasVidas,
-        bonificaciones = BonificacionesResponse(
-            rapidez = bonRapidez,
-            primeraVez = bonPrimera,
-            todoCorrecto = bonPerfect
+        // Guardar quiz finalizado
+        val quizFinalizado = quiz.copy(
+            fin = Instant.now().toString(),
+            tiempoUsadoSeg = tiempoTotal,
+            tiempoPromedioPorPregunta = tiempoPromedio,
+            preguntasCorrectas = correctas,
+            preguntasIncorrectas = incorrectas,
+            experienciaGanada = xpTotal,
+            bonificacionRapidez = bonRapidez,
+            bonificacionPrimeraVez = bonPrimera,
+            bonificacionTodoCorrecto = bonPerfect,
+            estado = "finalizado",
+            respuestas = respuestasEvaluadas
         )
-    )
-}
+        quizRepo.actualizarQuiz(quizFinalizado)
 
-    // OBTENER REVISIÓN
-    
+        // Actualizar estado del tema
+        actualizarEstadoTema(
+            cursoId = quiz.cursoId,
+            temaId = quiz.temaId,
+            estudianteId = userId,
+            porcentaje = porcentaje,
+            aprobado = aprobado,
+            preguntasIds = quiz.preguntas.map { it.preguntaId }
+        )
+
+        //  Actualizar progreso 
+        ServicioProgreso.actualizarProgresoQuiz(
+            usuarioId = userId,
+            cursoId = quiz.cursoId,
+            xpGanado = xpTotal,
+            vidasPerdidas = incorrectas,
+            aprobado = aprobado
+        )
+
+        return FinalizarQuizResponse(
+            preguntasCorrectas = correctas,
+            preguntasIncorrectas = incorrectas,
+            experienciaGanada = xpTotal,
+            vidasRestantes = nuevasVidas,
+            bonificaciones = BonificacionesResponse(
+                rapidez = bonRapidez,
+                primeraVez = bonPrimera,
+                todoCorrecto = bonPerfect
+            )
+        )
+    }
+
+    suspend fun obtenerVidas(cursoId: String, userId: String): Map<String, Any> {
+        // Regenerar vidas primero
+        ServicioProgreso.regenerarVidas(userId, cursoId, VIDA_REGEN_MINUTOS)
+
+        val progreso = ServicioProgreso.obtenerProgreso(userId, cursoId)
+            ?: throw IllegalStateException("Progreso no encontrado")
+
+        val vidasActuales = (progreso["vidas"] as? Number)?.toInt() ?: 5
+        val vidasMax = (progreso["vidasMax"] as? Number)?.toInt() ?: 5
+        val ultimaRegen = (progreso["ultimaRegen"] as? Number)?.toLong() ?: System.currentTimeMillis()
+
+        val ahora = System.currentTimeMillis()
+        val minutosParaProximaVida = if (vidasActuales < vidasMax) {
+            VIDA_REGEN_MINUTOS - ((ahora - ultimaRegen) / (1000 * 60)).toInt()
+        } else {
+            0
+        }
+
+        return mapOf(
+            "vidasActuales" to vidasActuales,
+            "vidasMax" to vidasMax,
+            "minutosParaProximaVida" to max(0, minutosParaProximaVida)
+        )
+    }
+
     suspend fun obtenerRevision(quizId: String, userId: String): RevisionQuizResponse {
         val quiz = quizRepo.obtenerQuizPorId(quizId)
             ?: throw IllegalStateException("Quiz no encontrado")
@@ -286,40 +271,10 @@ suspend fun finalizarQuiz(
         )
     }
 
-    // MARCAR EXPLICACIÓN VISTA
-    
     suspend fun marcarExplicacionVista(userId: String, temaId: String) {
         quizRepo.marcarExplicacionVista(userId, temaId)
     }
 
-    // OBTENER VIDAS
-  
-    suspend fun obtenerVidas(cursoId: String, userId: String): Map<String, Any> {
-        val inscripcion = quizRepo.obtenerInscripcion(cursoId, userId)
-            ?: throw IllegalStateException("No estás inscrito en este curso")
-
-        val inscripcionActualizada = quizRepo.regenerarVidas(cursoId, inscripcion, VIDA_REGEN_MINUTOS)
-
-        if (inscripcionActualizada.vidasActuales != inscripcion.vidasActuales) {
-            quizRepo.actualizarInscripcion(cursoId, inscripcionActualizada)
-        }
-
-        val ahora = System.currentTimeMillis()
-        val minutosParaProximaVida = if (inscripcionActualizada.vidasActuales < inscripcionActualizada.vidasMax) {
-            VIDA_REGEN_MINUTOS - ((ahora - inscripcionActualizada.ultimaRegen) / (1000 * 60)).toInt()
-        } else {
-            0
-        }
-
-        return mapOf(
-            "vidasActuales" to inscripcionActualizada.vidasActuales,
-            "vidasMax" to inscripcionActualizada.vidasMax,
-            "minutosParaProximaVida" to minutosParaProximaVida
-        )
-    }
-
-    // OBTENER RETROALIMENTACIÓN DE FALLOS
-    
     suspend fun obtenerRetroalimentacionFallos(
         quizId: String,
         userId: String
@@ -339,7 +294,7 @@ suspend fun finalizarQuiz(
 
         val detallesFallos = preguntasFalladas.map { respuesta ->
             val pregunta = preguntaRepo.obtenerPreguntaPorId(respuesta.preguntaId)
-                ?: throw IllegalStateException("Pregunta no encontrada: ${respuesta.preguntaId}")
+                ?: throw IllegalStateException("Pregunta no encontrada")
 
             val respuestaCorrectaIndex = pregunta.opciones.indexOfFirst { it.esCorrecta }
             val respuestaUsuario = pregunta.opciones.getOrNull(respuesta.respuestaSeleccionada)
@@ -367,7 +322,7 @@ suspend fun finalizarQuiz(
     ): List<RespuestaQuiz> {
         return respuestasUsuario.map { respuesta ->
             val pregunta = preguntaRepo.obtenerPreguntaPorId(respuesta.preguntaId)
-                ?: throw IllegalStateException("Pregunta no encontrada: ${respuesta.preguntaId}")
+                ?: throw IllegalStateException("Pregunta no encontrada")
 
             val opcionCorrecta = pregunta.opciones.indexOfFirst { it.esCorrecta }
             val esCorrecta = respuesta.respuestaSeleccionada == opcionCorrecta
@@ -466,22 +421,39 @@ suspend fun finalizarQuiz(
                 )
 
                 quizRepo.actualizarEstadoTema(estudianteId, cursoId, temaId, nuevoEstado)
-            } else {
-                val ahora = System.currentTimeMillis()
-                val nuevoEstado = EstadoTema(
-                    temaId = temaId,
-                    quizzesRealizados = 1,
-                    quizzesRequeridos = 0,
-                    porcentajePromedio = porcentaje,
-                    aprobado = aprobado,
-                    fechaPrimerIntento = ahora,
-                    fechaUltimoIntento = ahora,
-                    preguntasVistas = preguntasIds.toSet()
-                )
-                quizRepo.crearOActualizarEstadoTema(estudianteId, cursoId, temaId, nuevoEstado)
             }
         } catch (ex: Exception) {
-            println("Error actualizando estado del tema: ${ex.message}")
+            println(" Error actualizando estado del tema: ${ex.message}")
+        }
+    }
+
+    private suspend fun crearSolicitudMasPreguntas(
+        cursoId: String,
+        temaId: String,
+        userId: String,
+        estadoTema: EstadoTema?,
+        preguntasVistas: Set<String>
+    ) {
+        val estudiante = obtenerDatosEstudiante(cursoId, userId)
+        val tema = cursoRepo.obtenerTema(cursoId, temaId)
+        
+        val solicitud = SolicitudMasPreguntas(
+            cursoId = cursoId,
+            temaId = temaId,
+            tituloTema = tema?.titulo ?: "Sin título",
+            estudianteId = userId,
+            estudianteNombre = estudiante?.nombre ?: "Desconocido",
+            estudianteEmail = estudiante?.email,
+            preguntasActuales = preguntasVistas.size,
+            preguntasVistas = preguntasVistas.size,
+            mensaje = "El estudiante ha completado todas las preguntas disponibles.",
+            prioridad = determinarPrioridad(estadoTema)
+        )
+        
+        try {
+            solicitudPreguntasRepo.crearSolicitud(solicitud)
+        } catch (e: Exception) {
+            println("Error al crear solicitud: ${e.message}")
         }
     }
 
@@ -512,26 +484,6 @@ suspend fun finalizarQuiz(
             estadoTema.quizzesRealizados >= 3 -> "alta"
             estadoTema.porcentajePromedio < 50 -> "urgente"
             else -> "normal"
-        }
-    }
-
-    private suspend fun actualizarFlagNecesitaMasPreguntas(
-        cursoId: String,
-        temaId: String,
-        estudianteId: String,
-        necesita: Boolean
-    ) {
-        try {
-            val estadoActual = quizRepo.obtenerEstadoTema(estudianteId, cursoId, temaId)
-            if (estadoActual != null) {
-                val estadoActualizado = estadoActual.copy(
-                    necesitaMasPreguntas = necesita,
-                    fechaSolicitudMasPreguntas = if (necesita) System.currentTimeMillis() else null
-                )
-                quizRepo.actualizarEstadoTema(estudianteId, cursoId, temaId, estadoActualizado)
-            }
-        } catch (e: Exception) {
-            println("Error actualizando flag: ${e.message}")
         }
     }
 }

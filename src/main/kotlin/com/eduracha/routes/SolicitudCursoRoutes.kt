@@ -236,8 +236,7 @@ post("/curso/{cursoId}/estudiante/{estudianteId}/estado") {
         call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
     }
 }
- 
-// Obtener racha del estudiante autenticado
+ //  1. Obtener racha del estudiante autenticado
 get("/curso/{cursoId}/racha") {
     try {
         val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
@@ -249,19 +248,24 @@ get("/curso/{cursoId}/racha") {
         val cursoId = call.parameters["cursoId"]
             ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
 
-        val data = ServicioProgreso.obtenerProgreso(userId, cursoId)
+        val progreso = ServicioProgreso.obtenerProgreso(userId, cursoId)
         
-        if (data != null) {
-            call.respond(HttpStatusCode.OK, data)
+        if (progreso != null) {
+            val respuesta = mapOf<String, Any>(
+                "diasConsecutivos" to ((progreso["diasConsecutivos"] as? Number)?.toInt() ?: 0),
+                "ultimaFecha" to ((progreso["ultimaFecha"] as? Number)?.toLong() ?: 0),
+                "mejorRacha" to ((progreso["mejorRacha"] as? Number)?.toInt() ?: 0)
+            )
+            call.respond(HttpStatusCode.OK, respuesta)
         } else {
             call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No se encontró progreso"))
         }
     } catch (e: Exception) {
-        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error desconocido")))
     }
 }
 
-// Obtener experiencia del estudiante
+//  2. Obtener experiencia del estudiante autenticado
 get("/curso/{cursoId}/experiencia") {
     try {
         val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
@@ -276,24 +280,22 @@ get("/curso/{cursoId}/experiencia") {
         val progreso = ServicioProgreso.obtenerProgreso(userId, cursoId)
         
         if (progreso != null) {
-            val experiencia = (progreso["experiencia"] as? Number)?.toInt() ?: 0
-            val vidas = (progreso["vidas"] as? Number)?.toInt() ?: 5
-            val diasConsecutivos = (progreso["diasConsecutivos"] as? Number)?.toInt() ?: 0
-            
-            call.respond(HttpStatusCode.OK, mapOf(
-                "experiencia" to experiencia,
-                "vidas" to vidas,
-                "racha" to diasConsecutivos
-            ))
+            val respuesta = mapOf<String, Any>(
+                "experiencia" to ((progreso["experiencia"] as? Number)?.toInt() ?: 0),
+                "vidas" to ((progreso["vidas"] as? Number)?.toInt() ?: 5),
+                "vidasMax" to ((progreso["vidasMax"] as? Number)?.toInt() ?: 5),
+                "diasConsecutivos" to ((progreso["diasConsecutivos"] as? Number)?.toInt() ?: 0)
+            )
+            call.respond(HttpStatusCode.OK, respuesta)
         } else {
             call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No se encontró información"))
         }
     } catch (e: Exception) {
-        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error desconocido")))
     }
 }
 
-// A Obtener progreso de un estudiante específico
+//  3. Obtener progreso completo de un estudiante (solo docentes/admin)
 get("/curso/{cursoId}/estudiante/{estudianteId}/progreso") {
     try {
         val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
@@ -313,19 +315,19 @@ get("/curso/{cursoId}/estudiante/{estudianteId}/progreso") {
         val estudianteId = call.parameters["estudianteId"]
             ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del estudiante"))
 
-        val data = ServicioProgreso.obtenerProgreso(estudianteId, cursoId)
+        val progreso = ServicioProgreso.obtenerProgreso(estudianteId, cursoId)
         
-        if (data != null) {
-            call.respond(HttpStatusCode.OK, data)
+        if (progreso != null) {
+            call.respond(HttpStatusCode.OK, progreso)
         } else {
             call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No se encontró progreso"))
         }
     } catch (e: Exception) {
-        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error desconocido")))
     }
 }
 
-// Regenerar vidas manualmente (opcional)
+
 post("/curso/{cursoId}/regenerar-vidas") {
     try {
         val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
@@ -341,13 +343,16 @@ post("/curso/{cursoId}/regenerar-vidas") {
         
         val progreso = ServicioProgreso.obtenerProgreso(userId, cursoId)
         val vidas = (progreso?.get("vidas") as? Number)?.toInt() ?: 5
+        val vidasMax = (progreso?.get("vidasMax") as? Number)?.toInt() ?: 5
         
-        call.respond(HttpStatusCode.OK, mapOf(
+        val respuesta = mapOf<String, Any>(
             "mensaje" to "Vidas regeneradas",
-            "vidasActuales" to vidas
-        ))
+            "vidasActuales" to vidas,
+            "vidasMax" to vidasMax
+        )
+        call.respond(HttpStatusCode.OK, respuesta)
     } catch (e: Exception) {
-        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error desconocido")))
     }
 }
         }
