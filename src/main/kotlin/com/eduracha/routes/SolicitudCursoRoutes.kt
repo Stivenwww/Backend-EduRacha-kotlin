@@ -107,48 +107,58 @@ fun Application.solicitudCursoRoutes() {
             }
 
             // Profesor responde (aceptar o rechazar)
-            post("/responder/{solicitudId}") {
-                val solicitudId = call.parameters["solicitudId"]
-                    ?: return@post call.respond(
-                        HttpStatusCode.BadRequest,
-                        mapOf("error" to "Falta el ID de la solicitud")
-                    )
+            
+post("/responder/{solicitudId}") {
+    val solicitudId = call.parameters["solicitudId"]
+        ?: return@post call.respond(
+            HttpStatusCode.BadRequest,
+            mapOf("error" to "Falta el ID de la solicitud")
+        )
 
-                try {
-                    val request = call.receive<RespuestaSolicitudRequest>()
-                    val solicitud = repo.obtenerSolicitudPorId(solicitudId)
-                        ?: return@post call.respond(
-                            HttpStatusCode.NotFound,
-                            mapOf("error" to "Solicitud no encontrada")
-                        )
+    try {
+        val request = call.receive<RespuestaSolicitudRequest>()
+        val solicitud = repo.obtenerSolicitudPorId(solicitudId)
+            ?: return@post call.respond(
+                HttpStatusCode.NotFound,
+                mapOf("error" to "Solicitud no encontrada")
+            )
 
-                    if (request.aceptar) {
-                        // Cambiar estado y agregar estudiante con sus datos al curso
-                        repo.actualizarEstadoSolicitud(solicitudId, EstadoSolicitud.ACEPTADA, request.mensaje)
-                        repo.agregarEstudianteACurso(
-                            solicitud.cursoId,
-                            solicitud.estudianteId,
-                            solicitud.estudianteNombre,
-                            solicitud.estudianteEmail
-                        )
+        if (request.aceptar) {
+            // 1. Cambiar estado de la solicitud
+            repo.actualizarEstadoSolicitud(solicitudId, EstadoSolicitud.ACEPTADA, request.mensaje)
+            
+            // 2. Agregar estudiante al curso
+            repo.agregarEstudianteACurso(
+                solicitud.cursoId,
+                solicitud.estudianteId,
+                solicitud.estudianteNombre,
+                solicitud.estudianteEmail
+            )
+            
+            // 3. Inicializar progreso del estudiante (ESTRUCTURA UNIFICADA)
+            ServicioProgreso.inicializarProgresoEstudiante(
+                estudianteId = solicitud.estudianteId,
+                cursoId = solicitud.cursoId,
+                nombre = solicitud.estudianteNombre,
+                email = solicitud.estudianteEmail ?: "sin-email@ejemplo.com"
+            )
 
-                        call.respond(
-                            HttpStatusCode.OK,
-                            mapOf("message" to "Solicitud aceptada y estudiante agregado al curso")
-                        )
-                    } else {
-                        repo.actualizarEstadoSolicitud(solicitudId, EstadoSolicitud.RECHAZADA, request.mensaje)
-                        call.respond(HttpStatusCode.OK, mapOf("message" to "Solicitud rechazada"))
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    call.respond(
-                        HttpStatusCode.InternalServerError,
-                        mapOf("error" to "Error al procesar la solicitud: ${e.message}")
-                    )
-                }
-            }
-
+            call.respond(
+                HttpStatusCode.OK,
+                mapOf("message" to "Solicitud aceptada y estudiante agregado al curso con progreso inicializado")
+            )
+        } else {
+            repo.actualizarEstadoSolicitud(solicitudId, EstadoSolicitud.RECHAZADA, request.mensaje)
+            call.respond(HttpStatusCode.OK, mapOf("message" to "Solicitud rechazada"))
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        call.respond(
+            HttpStatusCode.InternalServerError,
+            mapOf("error" to "Error al procesar la solicitud: ${e.message}")
+        )
+    }
+}
             // Ver detalle de una solicitud
             get("/{solicitudId}") {
                 val solicitudId = call.parameters["solicitudId"]
@@ -226,8 +236,7 @@ post("/curso/{cursoId}/estudiante/{estudianteId}/estado") {
         call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
     }
 }
- // Falta por probar 
-
+ 
 // Obtener racha del estudiante autenticado
 get("/curso/{cursoId}/racha") {
     try {
@@ -240,34 +249,13 @@ get("/curso/{cursoId}/racha") {
         val cursoId = call.parameters["cursoId"]
             ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
 
-        val data = ServicioProgreso.obtenerRacha(cursoId, userId)
+        val data = ServicioProgreso.obtenerProgreso(userId, cursoId)
         
         if (data != null) {
             call.respond(HttpStatusCode.OK, data)
         } else {
-            call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No se encontró racha"))
+            call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No se encontró progreso"))
         }
-    } catch (e: Exception) {
-        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
-    }
-}
-
-// Actualizar racha del estudiante autenticado
-post("/curso/{cursoId}/racha/actualizar") {
-    try {
-        val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
-            ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
-
-        val decodedToken = FirebaseAuth.getInstance().verifyIdToken(token)
-        val userId = decodedToken.uid
-
-        val cursoId = call.parameters["cursoId"]
-            ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
-
-        val exito = call.request.queryParameters["exito"]?.toBoolean() ?: true
-
-        ServicioProgreso.actualizarRacha(cursoId, userId, exito)
-        call.respond(HttpStatusCode.OK, mapOf("mensaje" to "Racha actualizada correctamente"))
     } catch (e: Exception) {
         call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
     }
@@ -285,15 +273,17 @@ get("/curso/{cursoId}/experiencia") {
         val cursoId = call.parameters["cursoId"]
             ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
 
-        val racha = ServicioProgreso.obtenerRacha(cursoId, userId)
+        val progreso = ServicioProgreso.obtenerProgreso(userId, cursoId)
         
-        if (racha != null) {
-            val experiencia = (racha["experiencia"] as? Number)?.toInt() ?: 0
-            val vidas = (racha["vidas"] as? Number)?.toInt() ?: 5
+        if (progreso != null) {
+            val experiencia = (progreso["experiencia"] as? Number)?.toInt() ?: 0
+            val vidas = (progreso["vidas"] as? Number)?.toInt() ?: 5
+            val diasConsecutivos = (progreso["diasConsecutivos"] as? Number)?.toInt() ?: 0
             
             call.respond(HttpStatusCode.OK, mapOf(
                 "experiencia" to experiencia,
-                "vidas" to vidas
+                "vidas" to vidas,
+                "racha" to diasConsecutivos
             ))
         } else {
             call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No se encontró información"))
@@ -303,8 +293,8 @@ get("/curso/{cursoId}/experiencia") {
     }
 }
 
-// RUTAS ADMIN (para docentes que quieren ver racha de sus estudiantes)
-get("/curso/{cursoId}/estudiante/{estudianteId}/racha") {
+// A Obtener progreso de un estudiante específico
+get("/curso/{cursoId}/estudiante/{estudianteId}/progreso") {
     try {
         val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
             ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
@@ -323,13 +313,39 @@ get("/curso/{cursoId}/estudiante/{estudianteId}/racha") {
         val estudianteId = call.parameters["estudianteId"]
             ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del estudiante"))
 
-        val data = ServicioProgreso.obtenerRacha(cursoId, estudianteId)
+        val data = ServicioProgreso.obtenerProgreso(estudianteId, cursoId)
         
         if (data != null) {
             call.respond(HttpStatusCode.OK, data)
         } else {
-            call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No se encontró racha"))
+            call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No se encontró progreso"))
         }
+    } catch (e: Exception) {
+        call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+    }
+}
+
+// Regenerar vidas manualmente (opcional)
+post("/curso/{cursoId}/regenerar-vidas") {
+    try {
+        val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
+            ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))
+
+        val decodedToken = FirebaseAuth.getInstance().verifyIdToken(token)
+        val userId = decodedToken.uid
+
+        val cursoId = call.parameters["cursoId"]
+            ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
+
+        ServicioProgreso.regenerarVidas(userId, cursoId, vidaRegenMinutos = 30)
+        
+        val progreso = ServicioProgreso.obtenerProgreso(userId, cursoId)
+        val vidas = (progreso?.get("vidas") as? Number)?.toInt() ?: 5
+        
+        call.respond(HttpStatusCode.OK, mapOf(
+            "mensaje" to "Vidas regeneradas",
+            "vidasActuales" to vidas
+        ))
     } catch (e: Exception) {
         call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
     }

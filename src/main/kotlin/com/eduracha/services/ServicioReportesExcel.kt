@@ -155,7 +155,7 @@ class ServicioReportesExcel(
         val headerStyle = crearEstiloEncabezado(workbook)
         val correctaStyle = crearEstiloCorrecta(workbook)
         val incorrectaStyle = crearEstiloIncorrecta(workbook)
-        val dataStyle = crearEstiloDatos(workbook) // ✅ agregado aquí
+        val dataStyle = crearEstiloDatos(workbook) 
 
         var rowNum = 0
         val titleRow = sheet.createRow(rowNum++)

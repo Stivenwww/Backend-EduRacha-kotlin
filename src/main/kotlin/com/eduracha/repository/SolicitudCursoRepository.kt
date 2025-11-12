@@ -75,82 +75,74 @@ class SolicitudCursoRepository {
         }
 
     // Agregar estudiante con sus datos al curso
- suspend fun agregarEstudianteACurso(
-    cursoId: String,
-    estudianteId: String,
-    nombre: String,
-    email: String
-) = suspendCancellableCoroutine<Unit> { cont ->
+    suspend fun agregarEstudianteACurso(
+        cursoId: String,
+        estudianteId: String,
+        nombre: String,
+        email: String
+    ) = suspendCancellableCoroutine<Unit> { cont ->
 
-    val refEstudiante = refCursos.child(cursoId).child("estudiantes").child(estudianteId)
+        val refEstudiante = refCursos.child(cursoId).child("estudiantes").child(estudianteId)
 
-    val data = mapOf(
-        "id" to estudianteId,
-        "nombre" to nombre,
-        "email" to email
-    )
+        val data = mapOf(
+            "id" to estudianteId,
+            "nombre" to nombre,
+            "email" to email,
+            "estado" to "activo",
+            "fechaIngreso" to System.currentTimeMillis()
+        )
 
-    refEstudiante.setValue(data, object : DatabaseReference.CompletionListener {
-        override fun onComplete(error: DatabaseError?, ref: DatabaseReference) {
-            if (error != null) {
-                cont.resumeWithException(error.toException())
-            } else {
-                // Inicializar inscripción con vidas
-                val refInscripcion = db.getReference("inscripciones")
-                    .child(cursoId)
-                    .child(estudianteId)
+        refEstudiante.setValue(data, object : DatabaseReference.CompletionListener {
+            override fun onComplete(error: DatabaseError?, ref: DatabaseReference) {
+                if (error != null) {
+                    cont.resumeWithException(error.toException())
+                } else {
+                    // Inicializar inscripción con vidas
+                    val refInscripcion = db.getReference("inscripciones")
+                        .child(cursoId)
+                        .child(estudianteId)
 
-                val inscripcionData = mapOf(
-                    "userId" to estudianteId,
-                    "cursoId" to cursoId,
-                    "estado" to "aprobado",
-                    "vidasActuales" to 5,
-                    "vidasMax" to 5,
-                    "ultimaRegen" to System.currentTimeMillis(),
-                    "intentosHechos" to 0
-                )
+                    val inscripcionData = mapOf(
+                        "userId" to estudianteId,
+                        "cursoId" to cursoId,
+                        "estado" to "aprobado",
+                        "fechaInscripcion" to System.currentTimeMillis(),
+                        "fechaAprobacion" to System.currentTimeMillis(),
+                        "vidasActuales" to 5,
+                        "vidasMax" to 5,
+                        "ultimaRegen" to System.currentTimeMillis(),
+                        "intentosHechos" to 0,
+                        "experienciaTotal" to 0
+                    )
 
-                refInscripcion.setValue(inscripcionData, object : DatabaseReference.CompletionListener {
-                    override fun onComplete(errorInsc: DatabaseError?, ref2: DatabaseReference) {
-                        if (errorInsc != null) {
-                            println("Error inicializando inscripción: ${errorInsc.message}")
-                        }
-
-                        // Sincronizar las vidas iniciales con el nodo de rachas
-                        val refRacha = db.getReference("rachas").child(cursoId).child(estudianteId)
-                        
-                        val rachaData = mapOf(
-                            "vidas" to 5,
-                            "experiencia" to 0
-                        )
-                        
-                        refRacha.updateChildren(rachaData, object : DatabaseReference.CompletionListener {
-                            override fun onComplete(errorRacha: DatabaseError?, ref3: DatabaseReference) {
-                                if (errorRacha != null) {
-                                    println("Error inicializando racha: ${errorRacha.message}")
-                                }
-
-                                // Inicializar progreso y racha del estudiante
-                                try {
-                                    com.eduracha.services.ServicioProgreso.inicializarDatosEstudiante(
-                                        estudianteId = estudianteId,
-                                        cursoId = cursoId,
-                                        nombre = nombre,
-                                        email = email
-                                    )
-                                } catch (e: Exception) {
-                                    println("Error inicializando progreso: ${e.message}")
-                                }
-
-                                cont.resume(Unit)
+                    refInscripcion.setValue(inscripcionData, object : DatabaseReference.CompletionListener {
+                        override fun onComplete(errorInsc: DatabaseError?, ref2: DatabaseReference) {
+                            if (errorInsc != null) {
+                                println("Error inicializando inscripción: ${errorInsc.message}")
+                            } else {
+                                println("Inscripción creada para $nombre")
                             }
-                        })
-                    }
-                })
+
+                           
+                            try {
+                                com.eduracha.services.ServicioProgreso.inicializarProgresoEstudiante(
+                                    estudianteId = estudianteId,
+                                    cursoId = cursoId,
+                                    nombre = nombre,
+                                    email = email
+                                )
+                                println("Progreso unificado inicializado para $nombre")
+                            } catch (e: Exception) {
+                                println("Error inicializando progreso: ${e.message}")
+                            }
+
+                            cont.resume(Unit)
+                        }
+                    })
+                }
             }
-        }
-    })
-}
+        })
+    }
 
     // Obtener solicitud por ID
     suspend fun obtenerSolicitudPorId(id: String): SolicitudCurso? = suspendCancellableCoroutine { cont ->
@@ -213,30 +205,29 @@ class SolicitudCursoRepository {
                 })
         }
 
-        // Cambiar estado del estudiante dentro del curso
-suspend fun cambiarEstadoEstudiante(
-    cursoId: String,
-    estudianteId: String,
-    nuevoEstado: String
-) = suspendCancellableCoroutine<Unit> { cont ->
+    // Cambiar estado del estudiante dentro del curso
+    suspend fun cambiarEstadoEstudiante(
+        cursoId: String,
+        estudianteId: String,
+        nuevoEstado: String
+    ) = suspendCancellableCoroutine<Unit> { cont ->
 
-    val ref = refCursos.child(cursoId).child("estudiantes").child(estudianteId)
+        val ref = refCursos.child(cursoId).child("estudiantes").child(estudianteId)
 
-    if (nuevoEstado == "eliminado") {
-        ref.removeValue { error, _ ->
-            if (error != null) cont.resumeWithException(error.toException())
-            else cont.resume(Unit)
-        }
-    } else {
-        val updates = mapOf(
-            "estado" to nuevoEstado
-        )
+        if (nuevoEstado == "eliminado") {
+            ref.removeValue { error, _ ->
+                if (error != null) cont.resumeWithException(error.toException())
+                else cont.resume(Unit)
+            }
+        } else {
+            val updates = mapOf(
+                "estado" to nuevoEstado
+            )
 
-        ref.updateChildren(updates) { error, _ ->
-            if (error != null) cont.resumeWithException(error.toException())
-            else cont.resume(Unit)
+            ref.updateChildren(updates) { error, _ ->
+                if (error != null) cont.resumeWithException(error.toException())
+                else cont.resume(Unit)
+            }
         }
     }
-}
-
 }

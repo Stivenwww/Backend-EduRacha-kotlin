@@ -159,94 +159,96 @@ class QuizService(
 
     // FINALIZAR QUIZ
     
-    suspend fun finalizarQuiz(
-        quizId: String,
-        respuestas: List<RespuestaUsuario>,
-        userId: String
-    ): FinalizarQuizResponse {
-        val quiz = quizRepo.obtenerQuizPorId(quizId)
-            ?: throw IllegalStateException("Quiz no encontrado")
+suspend fun finalizarQuiz(
+    quizId: String,
+    respuestas: List<RespuestaUsuario>,
+    userId: String
+): FinalizarQuizResponse {
+    val quiz = quizRepo.obtenerQuizPorId(quizId)
+        ?: throw IllegalStateException("Quiz no encontrado")
 
-        if (quiz.estudianteId != userId) {
-            throw IllegalStateException("No tienes permiso para finalizar este quiz")
-        }
-
-        if (quiz.estado != "en_progreso") {
-            throw IllegalStateException("Este quiz ya fue finalizado")
-        }
-
-        val respuestasEvaluadas = evaluarRespuestas(quiz, respuestas)
-        val correctas = respuestasEvaluadas.count { it.esCorrecta }
-        val incorrectas = respuestasEvaluadas.size - correctas
-
-        val tiempoTotal = respuestas.sumOf { it.tiempoSeg }
-        val tiempoPromedio = if (respuestas.isNotEmpty()) tiempoTotal.toDouble() / respuestas.size else 0.0
-
-        val porcentaje = if (respuestas.isNotEmpty()) (correctas * 100) / respuestas.size else 0
-        val aprobado = porcentaje >= PORCENTAJE_APROBACION
-
-        val xpBase = correctas * XP_POR_RESPUESTA_CORRECTA
-        val bonRapidez = if (tiempoPromedio < UMBRAL_RAPIDEZ_SEG) BONIFICACION_RAPIDEZ else 0
-        val bonPerfect = if (incorrectas == 0 && correctas > 0) BONIFICACION_TODO_CORRECTO else 0
-
-        val esPrimeraVez = quizRepo.esPrimeraVezAprobado(userId, quiz.cursoId, quiz.temaId)
-        val bonPrimera = if (esPrimeraVez && aprobado) BONIFICACION_PRIMERA_VEZ else 0
-
-        val xpTotal = xpBase + bonRapidez + bonPrimera + bonPerfect
-
-        val inscripcion = quizRepo.obtenerInscripcion(quiz.cursoId, userId)
-            ?: throw IllegalStateException("Inscripción no encontrada")
-
-        val nuevasVidas = max(0, inscripcion.vidasActuales - incorrectas)
-        val inscripcionActualizada = inscripcion.copy(
-            vidasActuales = nuevasVidas,
-            intentosHechos = inscripcion.intentosHechos + 1
-        )
-        quizRepo.actualizarInscripcion(quiz.cursoId, inscripcionActualizada)
-
-        val quizFinalizado = quiz.copy(
-            fin = Instant.now().toString(),
-            tiempoUsadoSeg = tiempoTotal,
-            tiempoPromedioPorPregunta = tiempoPromedio,
-            preguntasCorrectas = correctas,
-            preguntasIncorrectas = incorrectas,
-            experienciaGanada = xpTotal,
-            bonificacionRapidez = bonRapidez,
-            bonificacionPrimeraVez = bonPrimera,
-            bonificacionTodoCorrecto = bonPerfect,
-            estado = "finalizado",
-            respuestas = respuestasEvaluadas
-        )
-        quizRepo.actualizarQuiz(quizFinalizado)
-
-        actualizarEstadoTema(
-            cursoId = quiz.cursoId,
-            temaId = quiz.temaId,
-            estudianteId = userId,
-            porcentaje = porcentaje,
-            aprobado = aprobado,
-            preguntasIds = quiz.preguntas.map { it.preguntaId }
-        )
-
-        if (aprobado) {
-            ServicioProgreso.actualizarProgreso(userId, "quiz", true)
-            ServicioProgreso.actualizarRacha(quiz.cursoId, userId, true)
-        } else {
-            ServicioProgreso.actualizarProgreso(userId, "quiz", false)
-        }
-
-        return FinalizarQuizResponse(
-            preguntasCorrectas = correctas,
-            preguntasIncorrectas = incorrectas,
-            experienciaGanada = xpTotal,
-            vidasRestantes = nuevasVidas,
-            bonificaciones = BonificacionesResponse(
-                rapidez = bonRapidez,
-                primeraVez = bonPrimera,
-                todoCorrecto = bonPerfect
-            )
-        )
+    if (quiz.estudianteId != userId) {
+        throw IllegalStateException("No tienes permiso para finalizar este quiz")
     }
+
+    if (quiz.estado != "en_progreso") {
+        throw IllegalStateException("Este quiz ya fue finalizado")
+    }
+
+    // Evaluar respuestas
+    val respuestasEvaluadas = evaluarRespuestas(quiz, respuestas)
+    val correctas = respuestasEvaluadas.count { it.esCorrecta }
+    val incorrectas = respuestasEvaluadas.size - correctas
+
+    val tiempoTotal = respuestas.sumOf { it.tiempoSeg }
+    val tiempoPromedio = if (respuestas.isNotEmpty()) tiempoTotal.toDouble() / respuestas.size else 0.0
+
+    val porcentaje = if (respuestas.isNotEmpty()) (correctas * 100) / respuestas.size else 0
+    val aprobado = porcentaje >= PORCENTAJE_APROBACION
+
+    val xpBase = correctas * XP_POR_RESPUESTA_CORRECTA
+    val bonRapidez = if (tiempoPromedio < UMBRAL_RAPIDEZ_SEG) BONIFICACION_RAPIDEZ else 0
+    val bonPerfect = if (incorrectas == 0 && correctas > 0) BONIFICACION_TODO_CORRECTO else 0
+
+    val esPrimeraVez = quizRepo.esPrimeraVezAprobado(userId, quiz.cursoId, quiz.temaId)
+    val bonPrimera = if (esPrimeraVez && aprobado) BONIFICACION_PRIMERA_VEZ else 0
+
+    val xpTotal = xpBase + bonRapidez + bonPrimera + bonPerfect
+
+    val inscripcion = quizRepo.obtenerInscripcion(quiz.cursoId, userId)
+        ?: throw IllegalStateException("Inscripción no encontrada")
+
+    val nuevasVidas = max(0, inscripcion.vidasActuales - incorrectas)
+    val inscripcionActualizada = inscripcion.copy(
+        vidasActuales = nuevasVidas,
+        intentosHechos = inscripcion.intentosHechos + 1
+    )
+    quizRepo.actualizarInscripcion(quiz.cursoId, inscripcionActualizada)
+
+    val quizFinalizado = quiz.copy(
+        fin = Instant.now().toString(),
+        tiempoUsadoSeg = tiempoTotal,
+        tiempoPromedioPorPregunta = tiempoPromedio,
+        preguntasCorrectas = correctas,
+        preguntasIncorrectas = incorrectas,
+        experienciaGanada = xpTotal,
+        bonificacionRapidez = bonRapidez,
+        bonificacionPrimeraVez = bonPrimera,
+        bonificacionTodoCorrecto = bonPerfect,
+        estado = "finalizado",
+        respuestas = respuestasEvaluadas
+    )
+    quizRepo.actualizarQuiz(quizFinalizado)
+
+    actualizarEstadoTema(
+        cursoId = quiz.cursoId,
+        temaId = quiz.temaId,
+        estudianteId = userId,
+        porcentaje = porcentaje,
+        aprobado = aprobado,
+        preguntasIds = quiz.preguntas.map { it.preguntaId }
+    )
+
+    ServicioProgreso.actualizarProgresoQuiz(
+        usuarioId = userId,
+        cursoId = quiz.cursoId,
+        xpGanado = xpTotal,  
+        vidasPerdidas = incorrectas,
+        aprobado = aprobado
+    )
+
+    return FinalizarQuizResponse(
+        preguntasCorrectas = correctas,
+        preguntasIncorrectas = incorrectas,
+        experienciaGanada = xpTotal,
+        vidasRestantes = nuevasVidas,
+        bonificaciones = BonificacionesResponse(
+            rapidez = bonRapidez,
+            primeraVez = bonPrimera,
+            todoCorrecto = bonPerfect
+        )
+    )
+}
 
     // OBTENER REVISIÓN
     

@@ -33,7 +33,7 @@ class RachaRepository {
                     val lista = snapshot.children.mapNotNull { userSnap ->
                         val id = userSnap.key ?: return@mapNotNull null
                         val experiencia = userSnap.child("experiencia").getValue(Int::class.java) ?: 0
-                        val racha = userSnap.child("rachaDias").getValue(Int::class.java) ?: 0
+                        val racha = userSnap.child("diasConsecutivos").getValue(Int::class.java) ?: 0
                         val vidas = userSnap.child("vidas").getValue(Int::class.java) ?: 0
 
                         RankingItem(
