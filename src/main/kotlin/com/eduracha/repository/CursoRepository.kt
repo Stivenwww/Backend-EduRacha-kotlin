@@ -230,4 +230,22 @@ suspend fun obtenerPerfilCurso(uid: String, cursoId: String): PerfilCurso? =
                 }
             })
     }
+    suspend fun marcarCursoCompletado(cursoId: String, userId: String) = 
+    suspendCancellableCoroutine<Unit> { cont ->
+        val ref = database.getReference("usuarios/$userId/cursos/$cursoId/progreso")
+        
+        val actualizacion = mapOf(
+            "completado" to true,
+            "fechaCompletado" to System.currentTimeMillis(),
+            "porcentaje" to 100
+        )
+        
+        ref.updateChildren(actualizacion, DatabaseReference.CompletionListener { error, _ ->
+            if (error != null) cont.resumeWithException(error.toException())
+            else {
+                println("🏆 Curso $cursoId marcado como completado para usuario $userId")
+                cont.resume(Unit)
+            }
+        })
+    }
 }

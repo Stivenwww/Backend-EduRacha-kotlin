@@ -71,74 +71,76 @@ object ServicioProgreso {
         }
 
  // Actualizar progreso después de quiz 
-    suspend fun actualizarProgresoQuiz(
-        usuarioId: String,
-        cursoId: String,
-        xpGanado: Int,
-        vidasPerdidas: Int,
-        aprobado: Boolean
-    ) = suspendCancellableCoroutine { cont ->
-        val ref = db.getReference("usuarios/$usuarioId/cursos/$cursoId/progreso")
-        
-        ref.addListenerForSingleValueEvent(object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                val actual = snapshot.value as? Map<String, Any> ?: mapOf()
-                
-                // Valores actuales
-                val xpActual = (actual["experiencia"] as? Number)?.toInt() ?: 0
-                val vidasActuales = (actual["vidas"] as? Number)?.toInt() ?: 5
-                val vidasMax = (actual["vidasMax"] as? Number)?.toInt() ?: 5
-                val quizzesCompletados = (actual["quizzesCompletados"] as? Number)?.toInt() ?: 0
-                
-                // Cálculo de racha
-                val ahora = System.currentTimeMillis()
+   suspend fun actualizarProgresoQuiz(
+    usuarioId: String,
+    cursoId: String,
+    xpGanado: Int,
+    vidasPerdidas: Int,
+    aprobado: Boolean,
+    actualizarRacha: Boolean = true 
+) = suspendCancellableCoroutine { cont ->
+    val ref = db.getReference("usuarios/$usuarioId/cursos/$cursoId/progreso")
+    
+    ref.addListenerForSingleValueEvent(object : ValueEventListener {
+        override fun onDataChange(snapshot: DataSnapshot) {
+            val actual = snapshot.value as? Map<String, Any> ?: mapOf()
+            
+            val xpActual = (actual["experiencia"] as? Number)?.toInt() ?: 0
+            val vidasActuales = (actual["vidas"] as? Number)?.toInt() ?: 5
+            val vidasMax = (actual["vidasMax"] as? Number)?.toInt() ?: 5
+            val quizzesCompletados = (actual["quizzesCompletados"] as? Number)?.toInt() ?: 0
+            
+            val ahora = System.currentTimeMillis()
+            
+            //  CALCULAR RACHA SOLO SI SE SOLICITA
+            val nuevaRacha = if (actualizarRacha) {
                 val ultimaFecha = (actual["ultimaFecha"] as? Number)?.toLong() ?: 0
                 val diasConsecutivos = (actual["diasConsecutivos"] as? Number)?.toInt() ?: 0
                 
                 val diferenciaDias = (ahora - ultimaFecha) / (1000 * 60 * 60 * 24)
-                val nuevaRacha = when {
-                    diferenciaDias >= 2L -> if (aprobado) 1 else 0 // Racha perdida
+                when {
+                    diferenciaDias >= 2L -> if (aprobado) 1 else 0
                     diferenciaDias >= 1L -> if (aprobado) diasConsecutivos + 1 else diasConsecutivos
-                    else -> diasConsecutivos // Mismo día
+                    else -> diasConsecutivos
                 }
-                
-                // Calcular nuevas vidas (no puede bajar de 0 ni superar el máximo)
-                val nuevasVidas = (vidasActuales - vidasPerdidas).coerceIn(0, vidasMax)
-                
-                // Actualización
-                val actualizacion = mapOf(
-                    "experiencia" to (xpActual + xpGanado),
-                    "vidas" to nuevasVidas,
-                    "quizzesCompletados" to (quizzesCompletados + 1),
-                    "diasConsecutivos" to nuevaRacha,
-                    "ultimaFecha" to ahora,
-                    "ultimaActividad" to ahora,
-                    "ultimaRegen" to ahora
-                )
+            } else {
+                (actual["diasConsecutivos"] as? Number)?.toInt() ?: 0
+            }
+            
+            val nuevasVidas = (vidasActuales - vidasPerdidas).coerceIn(0, vidasMax)
+            
+            val actualizacion = mapOf(
+                "experiencia" to (xpActual + xpGanado),
+                "vidas" to nuevasVidas,
+                "quizzesCompletados" to (quizzesCompletados + 1),
+                "diasConsecutivos" to nuevaRacha,
+                "ultimaFecha" to ahora,
+                "ultimaActividad" to ahora,
+                "ultimaRegen" to ahora
+            )
 
-                ref.updateChildren(actualizacion, object : DatabaseReference.CompletionListener {
-                    override fun onComplete(error: DatabaseError?, ref: DatabaseReference) {
-                        if (error != null) {
-                            cont.resumeWithException(error.toException())
-                        } else {
-                            println("Progreso actualizado: +$xpGanado XP, ${nuevasVidas} vidas, racha ${nuevaRacha} días")
-                            
-                            if (aprobado) {
-                                enviarNotificacionQuizCompletado(usuarioId, xpGanado, nuevaRacha)
-                            }
-                            
-                            cont.resume(Unit)
+            ref.updateChildren(actualizacion, object : DatabaseReference.CompletionListener {
+                override fun onComplete(error: DatabaseError?, ref: DatabaseReference) {
+                    if (error != null) {
+                        cont.resumeWithException(error.toException())
+                    } else {
+                        println("Progreso actualizado: +$xpGanado XP, ${nuevasVidas} vidas, racha ${nuevaRacha} días")
+                        
+                        if (aprobado && actualizarRacha) {
+                            enviarNotificacionQuizCompletado(usuarioId, xpGanado, nuevaRacha)
                         }
+                        
+                        cont.resume(Unit)
                     }
-                })
-            }
+                }
+            })
+        }
 
-            override fun onCancelled(error: DatabaseError) {
-                cont.resumeWithException(error.toException())
-            }
-        })
-    }
-
+        override fun onCancelled(error: DatabaseError) {
+            cont.resumeWithException(error.toException())
+        }
+    })
+}
     
      // Actualizar progreso después de práctica
     
@@ -314,4 +316,26 @@ object ServicioProgreso {
             }
         })
     }
+    suspend fun actualizarVidasInmediato(
+    usuarioId: String,
+    cursoId: String,
+    nuevasVidas: Int
+) = suspendCancellableCoroutine<Unit> { cont ->
+    val ref = db.getReference("usuarios/$usuarioId/cursos/$cursoId/progreso")
+    
+    val actualizacion = mapOf(
+        "vidas" to nuevasVidas.coerceIn(0, 5),
+        "ultimaRegen" to System.currentTimeMillis()
+    )
+    
+    ref.updateChildren(actualizacion, object : DatabaseReference.CompletionListener {
+        override fun onComplete(error: DatabaseError?, ref: DatabaseReference) {
+            if (error != null) cont.resumeWithException(error.toException())
+            else {
+                println(" Vidas actualizadas en tiempo real: $nuevasVidas")
+                cont.resume(Unit)
+            }
+        }
+    })
+}
 }

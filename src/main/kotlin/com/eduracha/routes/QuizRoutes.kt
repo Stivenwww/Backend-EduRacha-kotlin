@@ -8,8 +8,18 @@ import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import com.eduracha.repository.QuizRepository 
+import com.eduracha.repository.CursoRepository
+import io.ktor.server.auth.*
+import io.ktor.server.auth.jwt.*
 
-fun Route.quizRoutes(quizService: QuizService) {
+
+
+fun Route.quizRoutes(
+    quizService: QuizService,
+    quizRepo: QuizRepository, 
+    cursoRepo: CursoRepository 
+) {
     
     route("/quiz") {
         
@@ -189,4 +199,79 @@ fun Route.quizRoutes(quizService: QuizService) {
             }
         }
     }
+    // Verificar modos disponibles para un tema
+get("/api/quiz/modos-disponibles") {
+    val cursoId = call.parameters["cursoId"] ?: return@get call.respond(
+        HttpStatusCode.BadRequest, "Falta cursoId"
+    )
+    val temaId = call.parameters["temaId"] ?: return@get call.respond(
+        HttpStatusCode.BadRequest, "Falta temaId"
+    )
+    val userId = call.principal<JWTPrincipal>()?.payload?.getClaim("uid")?.asString()
+        ?: return@get call.respond(HttpStatusCode.Unauthorized, "No autenticado")
+    
+    val estadoTema = quizService.obtenerEstadoTema(cursoId, temaId, userId)
+    val temaAprobado = estadoTema?.aprobado ?: false
+    
+    val modosDisponibles = if (temaAprobado) {
+        listOf("oficial", "practica")
+    } else {
+        listOf("oficial")
+    }
+    
+    call.respond(ModoQuizDisponibleResponse(
+        temaId = temaId,
+        temaAprobado = temaAprobado,
+        modosDisponibles = modosDisponibles,
+        modoRecomendado = if (temaAprobado) "practica" else "oficial",
+        mensaje = if (temaAprobado) {
+            "Ya aprobaste este tema. Puedes practicar o hacer un quiz oficial."
+        } else {
+            "Debes aprobar este tema primero"
+        }
+    ))
+}
+
+// Verificar disponibilidad del quiz final
+get("/api/quiz/final/disponible") {
+    val cursoId = call.parameters["cursoId"] ?: return@get call.respond(
+        HttpStatusCode.BadRequest, "Falta cursoId"
+    )
+    val userId = call.principal<JWTPrincipal>()?.payload?.getClaim("uid")?.asString()
+        ?: return@get call.respond(HttpStatusCode.Unauthorized, "No autenticado")
+    
+    val perfilCurso = quizRepo.obtenerPerfilCurso(userId, cursoId)
+    val curso = cursoRepo.obtenerCursoPorId(cursoId)
+    
+    val temasAprobados = perfilCurso?.temasCompletados?.values?.count { it.aprobado } ?: 0
+    val totalTemas = curso?.temas?.size ?: 0
+    val disponible = temasAprobados == totalTemas && totalTemas > 0
+    
+    call.respond(QuizFinalDisponibleResponse(
+        disponible = disponible,
+        temasAprobados = temasAprobados,
+        totalTemas = totalTemas,
+        mensaje = if (disponible) {
+            " ¡Felicitaciones! Puedes realizar el quiz final del curso"
+        } else {
+            "Progreso: $temasAprobados/$totalTemas temas aprobados"
+        }
+    ))
+}
+
+// Iniciar quiz final
+post("/api/quiz/final/iniciar") {
+    val cursoId = call.receive<Map<String, String>>()["cursoId"]
+        ?: return@post call.respond(HttpStatusCode.BadRequest, "Falta cursoId")
+    
+    val userId = call.principal<JWTPrincipal>()?.payload?.getClaim("uid")?.asString()
+        ?: return@post call.respond(HttpStatusCode.Unauthorized, "No autenticado")
+    
+    try {
+        val response = quizService.iniciarQuizFinal(cursoId, userId)
+        call.respond(HttpStatusCode.OK, response)
+    } catch (e: Exception) {
+        call.respond(HttpStatusCode.BadRequest, mapOf("error" to e.message))
+    }
+}
 }

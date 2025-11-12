@@ -24,8 +24,13 @@ class QuizService(
         const val PORCENTAJE_APROBACION = 80
     }
 
-    //  INICIAR QUIZ 
-    suspend fun iniciarQuiz(cursoId: String, temaId: String, userId: String): IniciarQuizResponse {
+    // INICIAR QUIZ
+    suspend fun iniciarQuiz(
+        cursoId: String,
+        temaId: String,
+        userId: String,
+        modoSolicitado: String = "auto" // "auto", "oficial", "practica"
+    ): IniciarQuizResponse {
         // 1. Obtener curso y programación
         val curso = cursoRepo.obtenerCursoPorId(cursoId)
             ?: throw IllegalStateException("Curso no encontrado")
@@ -33,7 +38,7 @@ class QuizService(
         val programacion = curso.programacion
             ?: throw IllegalStateException("El curso no tiene programación configurada")
 
-        // 2.  Verificar progreso 
+        // 2. Verificar progreso
         val progreso = ServicioProgreso.obtenerProgreso(userId, cursoId)
             ?: throw IllegalStateException("No estás inscrito en este curso")
 
@@ -61,16 +66,16 @@ class QuizService(
             throw IllegalStateException(validacion.mensaje)
         }
 
-        // 6.  Regenerar vidas ANTES de verificar
+        // 6. Regenerar vidas antes de verificar
         ServicioProgreso.regenerarVidas(userId, cursoId, VIDA_REGEN_MINUTOS)
-        
+
         // Obtener progreso actualizado
         val progresoActualizado = ServicioProgreso.obtenerProgreso(userId, cursoId)
             ?: throw IllegalStateException("Error al obtener progreso")
 
-        val vidasActuales = (progresoActualizado["vidas"] as? Number)?.toInt() ?: 5
+        val vidasActuales = (progresoActualizado["vidas"] as? Number)?.toInt() ?: VIDAS_MAX
 
-        // 7. Verificar vidas
+        // 7. Verificar vidas antes de crear el quiz
         if (vidasActuales <= 0) {
             throw IllegalStateException("No tienes vidas disponibles. Espera $VIDA_REGEN_MINUTOS minutos para recuperar una vida.")
         }
@@ -83,20 +88,20 @@ class QuizService(
 
         // 9. Validar preguntas disponibles
         val preguntasYaVistas = estadoTema?.preguntasVistas ?: emptySet()
-        
+
         val agotoBanco = servicioSeleccion.estudianteVioTodasLasPreguntas(
             cursoId, temaId, preguntasYaVistas
         )
-        
+
         if (agotoBanco) {
             val existeSolicitud = solicitudPreguntasRepo.existeSolicitudPendiente(
                 cursoId, temaId, userId
             )
-            
+
             if (!existeSolicitud) {
                 crearSolicitudMasPreguntas(cursoId, temaId, userId, estadoTema, preguntasYaVistas)
             }
-            
+
             throw IllegalStateException(
                 "Has completado todas las preguntas disponibles para este tema. " +
                 "Se ha notificado al docente para que agregue más preguntas."
@@ -116,10 +121,28 @@ class QuizService(
             throw IllegalStateException("No hay preguntas disponibles para este tema")
         }
 
-        return crearYResponderQuiz(cursoId, temaId, userId, preguntasSeleccionadas, estadoTema)
+        // DETERMINAR MODO DEL QUIZ
+        val temaAprobado = estadoTema?.aprobado ?: false
+
+        val modo = when {
+            modoSolicitado == "practica" -> "practica"
+            temaId == "quiz_final" -> "final"
+            !temaAprobado -> "oficial" // primera vez obligatorio oficial
+            else -> modoSolicitado.takeIf { it in listOf("oficial", "practica") } ?: "practica"
+        }
+
+        return crearYResponderQuiz(
+            cursoId = cursoId,
+            temaId = temaId,
+            userId = userId,
+            preguntas = preguntasSeleccionadas,
+            estadoTema = estadoTema,
+            modo = modo,
+            vidasIniciales = vidasActuales
+        )
     }
 
-    // FINALIZAR QUIZ - usuarios/cursos/progreso
+    // FINALIZAR QUIZ - controla los tres modos y usa control de vidas en tiempo real
     suspend fun finalizarQuiz(
         quizId: String,
         respuestas: List<RespuestaUsuario>,
@@ -136,33 +159,78 @@ class QuizService(
             throw IllegalStateException("Este quiz ya fue finalizado")
         }
 
-        // Evaluar respuestas
-        val respuestasEvaluadas = evaluarRespuestas(quiz, respuestas)
+        // Evaluar respuestas con control de vidas en tiempo real
+        val (respuestasEvaluadas, vidasFinales) = evaluarRespuestas(quiz, respuestas, userId)
+
         val correctas = respuestasEvaluadas.count { it.esCorrecta }
         val incorrectas = respuestasEvaluadas.size - correctas
-
-        val tiempoTotal = respuestas.sumOf { it.tiempoSeg }
-        val tiempoPromedio = if (respuestas.isNotEmpty()) tiempoTotal.toDouble() / respuestas.size else 0.0
-
         val porcentaje = if (respuestas.isNotEmpty()) (correctas * 100) / respuestas.size else 0
         val aprobado = porcentaje >= PORCENTAJE_APROBACION
 
-        // Calcular experiencia
+        // Calcular experiencia base y bonificaciones
         val xpBase = correctas * XP_POR_RESPUESTA_CORRECTA
+        val tiempoTotal = respuestas.sumOf { it.tiempoSeg }
+        val tiempoPromedio = if (respuestas.isNotEmpty()) tiempoTotal.toDouble() / respuestas.size else 0.0
+
         val bonRapidez = if (tiempoPromedio < UMBRAL_RAPIDEZ_SEG) BONIFICACION_RAPIDEZ else 0
         val bonPerfect = if (incorrectas == 0 && correctas > 0) BONIFICACION_TODO_CORRECTO else 0
 
-        val esPrimeraVez = quizRepo.esPrimeraVezAprobado(userId, quiz.cursoId, quiz.temaId)
-        val bonPrimera = if (esPrimeraVez && aprobado) BONIFICACION_PRIMERA_VEZ else 0
+        // Lógica según modo
+        val (xpTotal, bonPrimera) = when (quiz.modo) {
+            "oficial" -> {
+                val esPrimeraVez = quizRepo.esPrimeraVezAprobado(userId, quiz.cursoId, quiz.temaId)
+                val bonPrimeraLocal = if (esPrimeraVez && aprobado) BONIFICACION_PRIMERA_VEZ else 0
+                val xpTotalLocal = xpBase + bonRapidez + bonPrimeraLocal + bonPerfect
 
-        val xpTotal = xpBase + bonRapidez + bonPrimera + bonPerfect
+                ServicioProgreso.actualizarProgresoQuiz(
+                    usuarioId = userId,
+                    cursoId = quiz.cursoId,
+                    xpGanado = xpTotalLocal,
+                    vidasPerdidas = 0, 
+                    aprobado = aprobado,
+                    actualizarRacha = true
+                )
 
-        // Obtener vidas actuales desde progreso
-        val progreso = ServicioProgreso.obtenerProgreso(userId, quiz.cursoId)
-            ?: throw IllegalStateException("Progreso no encontrado")
+                Pair(xpTotalLocal, bonPrimeraLocal)
+            }
 
-        val vidasActuales = (progreso["vidas"] as? Number)?.toInt() ?: 5
-        val nuevasVidas = max(0, vidasActuales - incorrectas)
+            "practica" -> {
+                val xpTotalLocal = xpBase + bonRapidez + bonPerfect
+
+                ServicioProgreso.actualizarProgresoQuiz(
+                    usuarioId = userId,
+                    cursoId = quiz.cursoId,
+                    xpGanado = xpTotalLocal,
+                    vidasPerdidas = 0,
+                    aprobado = false,
+                    actualizarRacha = false
+                )
+
+                Pair(xpTotalLocal, 0)
+            }
+
+            "final" -> {
+                val BONIFICACION_FINAL = 100
+                val xpTotalLocal = xpBase + bonRapidez + bonPerfect + BONIFICACION_FINAL
+
+                ServicioProgreso.actualizarProgresoQuiz(
+                    usuarioId = userId,
+                    cursoId = quiz.cursoId,
+                    xpGanado = xpTotalLocal,
+                    vidasPerdidas = 0,
+                    aprobado = aprobado,
+                    actualizarRacha = false
+                )
+
+                if (aprobado) {
+                    cursoRepo.marcarCursoCompletado(quiz.cursoId, userId)
+                }
+
+                Pair(xpTotalLocal, 0)
+            }
+
+            else -> Pair(xpBase, 0)
+        }
 
         // Guardar quiz finalizado
         val quizFinalizado = quiz.copy(
@@ -176,34 +244,28 @@ class QuizService(
             bonificacionPrimeraVez = bonPrimera,
             bonificacionTodoCorrecto = bonPerfect,
             estado = "finalizado",
-            respuestas = respuestasEvaluadas
+            respuestas = respuestasEvaluadas,
+            vidasFinales = vidasFinales
         )
         quizRepo.actualizarQuiz(quizFinalizado)
 
-        // Actualizar estado del tema
-        actualizarEstadoTema(
-            cursoId = quiz.cursoId,
-            temaId = quiz.temaId,
-            estudianteId = userId,
-            porcentaje = porcentaje,
-            aprobado = aprobado,
-            preguntasIds = quiz.preguntas.map { it.preguntaId }
-        )
-
-        //  Actualizar progreso 
-        ServicioProgreso.actualizarProgresoQuiz(
-            usuarioId = userId,
-            cursoId = quiz.cursoId,
-            xpGanado = xpTotal,
-            vidasPerdidas = incorrectas,
-            aprobado = aprobado
-        )
+        // Actualizar estado del tema solo en modos oficiales y final
+        if (quiz.modo != "practica") {
+            actualizarEstadoTema(
+                cursoId = quiz.cursoId,
+                temaId = quiz.temaId,
+                estudianteId = userId,
+                porcentaje = porcentaje,
+                aprobado = aprobado,
+                preguntasIds = quiz.preguntas.map { it.preguntaId }
+            )
+        }
 
         return FinalizarQuizResponse(
             preguntasCorrectas = correctas,
             preguntasIncorrectas = incorrectas,
             experienciaGanada = xpTotal,
-            vidasRestantes = nuevasVidas,
+            vidasRestantes = vidasFinales,
             bonificaciones = BonificacionesResponse(
                 rapidez = bonRapidez,
                 primeraVez = bonPrimera,
@@ -212,8 +274,8 @@ class QuizService(
         )
     }
 
+    // Obtener vidas 
     suspend fun obtenerVidas(cursoId: String, userId: String): Map<String, Any> {
-        // Regenerar vidas primero
         ServicioProgreso.regenerarVidas(userId, cursoId, VIDA_REGEN_MINUTOS)
 
         val progreso = ServicioProgreso.obtenerProgreso(userId, cursoId)
@@ -237,6 +299,7 @@ class QuizService(
         )
     }
 
+    // Obtener revisión 
     suspend fun obtenerRevision(quizId: String, userId: String): RevisionQuizResponse {
         val quiz = quizRepo.obtenerQuizPorId(quizId)
             ?: throw IllegalStateException("Quiz no encontrado")
@@ -316,32 +379,100 @@ class QuizService(
         )
     }
 
+    // Evaluar respuestas: resta vidas en tiempo real y devuelve las respuestas evaluadas junto con las vidas finales
     private suspend fun evaluarRespuestas(
         quiz: Quiz,
-        respuestasUsuario: List<RespuestaUsuario>
-    ): List<RespuestaQuiz> {
-        return respuestasUsuario.map { respuesta ->
+        respuestasUsuario: List<RespuestaUsuario>,
+        userId: String
+    ): Pair<List<RespuestaQuiz>, Int> {
+
+        var vidasActuales = quiz.vidasIniciales ?: run {
+            // si el modelo quiz no tiene vidasIniciales, obtener desde progreso
+            val progreso = ServicioProgreso.obtenerProgreso(userId, quiz.cursoId)
+                ?: throw IllegalStateException("Progreso no encontrado")
+            (progreso["vidas"] as? Number)?.toInt() ?: VIDAS_MAX
+        }
+
+        val respuestasEvaluadas = mutableListOf<RespuestaQuiz>()
+
+        for (respuesta in respuestasUsuario) {
             val pregunta = preguntaRepo.obtenerPreguntaPorId(respuesta.preguntaId)
                 ?: throw IllegalStateException("Pregunta no encontrada")
 
             val opcionCorrecta = pregunta.opciones.indexOfFirst { it.esCorrecta }
             val esCorrecta = respuesta.respuestaSeleccionada == opcionCorrecta
 
-            RespuestaQuiz(
-                preguntaId = respuesta.preguntaId,
-                respuestaSeleccionada = respuesta.respuestaSeleccionada,
-                tiempoSeg = respuesta.tiempoSeg,
-                esCorrecta = esCorrecta
+            // restar vida inmediatamente si falla
+            if (!esCorrecta) {
+                vidasActuales -= 1
+
+                // actualizar vidas en Firebase en tiempo real
+                try {
+                    ServicioProgreso.actualizarVidasInmediato(userId, quiz.cursoId, vidasActuales)
+                } catch (ex: Exception) {
+                    // si falla la actualización en tiempo real, continuar pero registrar
+                    println("Error actualizando vidas en tiempo real: ${ex.message}")
+                }
+
+                // si llega a 0, detener quiz: marcar como abandonado y persistir respuestas parciales
+                if (vidasActuales <= 0) {
+                    val quizAbandonado = quiz.copy(
+                        estado = "abandonado",
+                        fin = Instant.now().toString(),
+                        vidasFinales = 0,
+                        respuestas = respuestasEvaluadas
+                    )
+                    try {
+                        quizRepo.actualizarQuiz(quizAbandonado)
+                    } catch (ex: Exception) {
+                        println("Error guardando quiz abandonado: ${ex.message}")
+                    }
+
+                    throw IllegalStateException(
+                        "Te has quedado sin vidas. El quiz se ha detenido.\n" +
+                        "Respondiste correctamente ${respuestasEvaluadas.count { it.esCorrecta }} preguntas."
+                    )
+                }
+            }
+
+            respuestasEvaluadas.add(
+                RespuestaQuiz(
+                    preguntaId = respuesta.preguntaId,
+                    respuestaSeleccionada = respuesta.respuestaSeleccionada,
+                    tiempoSeg = respuesta.tiempoSeg,
+                    esCorrecta = esCorrecta
+                )
             )
         }
+
+        return Pair(respuestasEvaluadas, vidasActuales)
     }
 
+    private suspend fun verificarVidasDuranteQuiz(
+        userId: String,
+        cursoId: String
+    ): Int {
+        val progreso = ServicioProgreso.obtenerProgreso(userId, cursoId)
+            ?: throw IllegalStateException("Progreso no encontrado")
+
+        val vidasActuales = (progreso["vidas"] as? Number)?.toInt() ?: 0
+
+        if (vidasActuales <= 0) {
+            throw IllegalStateException("Te has quedado sin vidas. El quiz se ha detenido.")
+        }
+
+        return vidasActuales
+    }
+
+    // Crear y responder quiz: ahora acepta modo y vidasIniciales opcionales para persistir esa info
     private suspend fun crearYResponderQuiz(
         cursoId: String,
         temaId: String,
         userId: String,
         preguntas: List<Pregunta>,
-        estadoTema: EstadoTema?
+        estadoTema: EstadoTema?,
+        modo: String = "practica",
+        vidasIniciales: Int? = null
     ): IniciarQuizResponse {
         val quizPreguntas = preguntas.mapIndexed { index, pregunta ->
             QuizPregunta(
@@ -357,7 +488,9 @@ class QuizService(
             preguntas = quizPreguntas,
             inicio = Instant.now().toString(),
             estado = "en_progreso",
-            intentoNumero = (estadoTema?.quizzesRealizados ?: 0) + 1
+            intentoNumero = (estadoTema?.quizzesRealizados ?: 0) + 1,
+            modo = modo,
+            vidasIniciales = vidasIniciales ?: VIDAS_MAX
         )
 
         val quizId = quizRepo.crearQuiz(quiz)
@@ -377,7 +510,64 @@ class QuizService(
         )
     }
 
-    private suspend fun obtenerEstadoTema(
+    // Iniciar quiz final: método que crea un quiz integrador tomando preguntas de todos los temas
+    suspend fun iniciarQuizFinal(cursoId: String, userId: String): IniciarQuizResponse {
+
+        // 1. Obtener curso
+        val curso = cursoRepo.obtenerCursoPorId(cursoId)
+            ?: throw IllegalStateException("Curso no encontrado")
+
+        // 2. Verificar que todos los temas estén aprobados
+        val perfilCurso = quizRepo.obtenerPerfilCurso(userId, cursoId)
+            ?: throw IllegalStateException("No se encontró progreso del curso")
+
+        val temasAprobados = perfilCurso.temasCompletados.values.filter { it.aprobado }
+        val totalTemas = curso.temas?.size ?: 0
+
+        if (temasAprobados.size < totalTemas) {
+            throw IllegalStateException(
+                "Aún no has aprobado todos los temas.\n" +
+                "Progreso: ${temasAprobados.size}/$totalTemas temas completados"
+            )
+        }
+
+        // 3. Verificar vidas
+        val progreso = ServicioProgreso.obtenerProgreso(userId, cursoId)
+            ?: throw IllegalStateException("Progreso no encontrado")
+
+        val vidasActuales = (progreso["vidas"] as? Number)?.toInt() ?: VIDAS_MAX
+
+        if (vidasActuales <= 0) {
+            throw IllegalStateException(
+                "No tienes vidas disponibles para el quiz final."
+            )
+        }
+
+        // 4. Seleccionar preguntas de todos los temas (2 por tema)
+        val preguntasSeleccionadas = curso.temas!!.values.flatMap { tema ->
+            val preguntasDelTema = preguntaRepo.obtenerPreguntasPorCursoYEstado(cursoId, "aprobada")
+                .filter { it.temaId == tema.id }
+
+            preguntasDelTema.shuffled().take(2)
+        }
+
+        if (preguntasSeleccionadas.isEmpty()) {
+            throw IllegalStateException("No hay preguntas disponibles para el quiz final")
+        }
+
+        // 5. Crear quiz final (modo 'final')
+        return crearYResponderQuiz(
+            cursoId = cursoId,
+            temaId = "quiz_final",
+            userId = userId,
+            preguntas = preguntasSeleccionadas,
+            estadoTema = null,
+            modo = "final",
+            vidasIniciales = vidasActuales
+        )
+    }
+
+suspend fun obtenerEstadoTema(
         cursoId: String,
         temaId: String,
         estudianteId: String
@@ -423,7 +613,7 @@ class QuizService(
                 quizRepo.actualizarEstadoTema(estudianteId, cursoId, temaId, nuevoEstado)
             }
         } catch (ex: Exception) {
-            println(" Error actualizando estado del tema: ${ex.message}")
+            println("Error actualizando estado del tema: ${ex.message}")
         }
     }
 
@@ -436,7 +626,7 @@ class QuizService(
     ) {
         val estudiante = obtenerDatosEstudiante(cursoId, userId)
         val tema = cursoRepo.obtenerTema(cursoId, temaId)
-        
+
         val solicitud = SolicitudMasPreguntas(
             cursoId = cursoId,
             temaId = temaId,
@@ -449,7 +639,7 @@ class QuizService(
             mensaje = "El estudiante ha completado todas las preguntas disponibles.",
             prioridad = determinarPrioridad(estadoTema)
         )
-        
+
         try {
             solicitudPreguntasRepo.crearSolicitud(solicitud)
         } catch (e: Exception) {
@@ -463,10 +653,10 @@ class QuizService(
     ): DatosEstudiante? {
         return try {
             val estudiantes = cursoRepo.obtenerEstudiantesPorCurso(cursoId)
-            val estudiante = estudiantes.find { 
-                (it["id"] as? String) == estudianteId 
+            val estudiante = estudiantes.find {
+                (it["id"] as? String) == estudianteId
             }
-            
+
             DatosEstudiante(
                 id = estudianteId,
                 nombre = estudiante?.get("nombre") as? String ?: "Desconocido",

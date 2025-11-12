@@ -22,7 +22,12 @@ data class Quiz(
     val bonificacionRapidez: Int = 0,
     val bonificacionPrimeraVez: Int = 0,
     val bonificacionTodoCorrecto: Int = 0,
-    val respuestas: List<RespuestaQuiz> = emptyList()
+    val respuestas: List<RespuestaQuiz> = emptyList(),
+
+    val modo: String = "oficial", // "oficial" | "practica" | "final"
+    val vidasIniciales: Int = 5,
+    val vidasFinales: Int = 5
+
 )
 
 @Serializable
@@ -151,4 +156,20 @@ data class RetroalimentacionPregunta(
     val respuestaUsuarioTexto: String,
     val respuestaCorrectaTexto: String,
     val explicacion: String
+)
+@Serializable
+data class ModoQuizDisponibleResponse(
+    val temaId: String,
+    val temaAprobado: Boolean,
+    val modosDisponibles: List<String>, // ["oficial", "practica"]
+    val modoRecomendado: String,
+    val mensaje: String
+)
+
+@Serializable
+data class QuizFinalDisponibleResponse(
+    val disponible: Boolean,
+    val temasAprobados: Int,
+    val totalTemas: Int,
+    val mensaje: String
 )

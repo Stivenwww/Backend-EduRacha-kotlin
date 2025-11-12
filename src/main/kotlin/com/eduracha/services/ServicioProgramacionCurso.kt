@@ -13,9 +13,7 @@ object ServicioProgramacionCurso {
     const val PREGUNTAS_POR_QUIZ = 10
     const val DIAS_ENTRE_QUIZZES = 1 // Mínimo 1 día entre quizzes del mismo tema
     
-    /**
-     * Genera la programación completa del curso al crearlo o actualizarlo
-     */
+     //Genera la programación completa del curso al crearlo o actualizarlo
     fun generarProgramacion(curso: Curso, fechaInicio: Long = System.currentTimeMillis()): ProgramacionCurso {
         val temas = curso.temas?.values?.toList() ?: return ProgramacionCurso()
         val totalTemas = temas.size
@@ -62,10 +60,8 @@ object ServicioProgramacionCurso {
         )
     }
     
-    /**
-     * Calcula cuántos quizzes debe hacer el estudiante por tema
-     * Basado en la duración asignada al tema
-     */
+     // Calcula cuántos quizzes debe hacer el estudiante por tema
+     //Basado en la duración asignada al tema
     private fun calcularQuizzesRequeridos(diasAsignados: Int): Int {
         return when {
             diasAsignados <= 2 -> QUIZZES_MINIMOS_POR_TEMA // 3 quizzes
@@ -75,52 +71,52 @@ object ServicioProgramacionCurso {
         }
     }
     
-    /**
-     * Determina si el estudiante puede realizar un quiz del tema en este momento
-     */
-    fun puedeRealizarQuiz(
-        cursoId: String,
-        temaId: String,
-        estudianteId: String,
-        programacion: ProgramacionCurso,
-        estadoTema: EstadoTema?
-    ): ValidacionQuiz {
-        val rangoTema = programacion.distribucionTemporal[temaId]
-            ?: return ValidacionQuiz(false, "Tema no encontrado en la programación")
-        
-        val ahora = System.currentTimeMillis()
-        
-        // 1. Validar si el tema ya está disponible
-        if (ahora < rangoTema.fechaInicio) {
-            val diasRestantes = ((rangoTema.fechaInicio - ahora) / (1000 * 60 * 60 * 24)).toInt()
-            return ValidacionQuiz(false, "Este tema estará disponible en $diasRestantes días")
-        }
-        
-        // 2. Validar si el tema ya expiró
-        if (ahora > rangoTema.fechaFin) {
-            return ValidacionQuiz(false, "El período de este tema ya finalizó")
-        }
-        
-        // 3. Validar si ya completó todos los quizzes requeridos
-        val quizzesRealizados = estadoTema?.quizzesRealizados ?: 0
-        if (quizzesRealizados >= rangoTema.quizzesRequeridos) {
-            return ValidacionQuiz(false, "Ya completaste todos los quizzes de este tema")
-        }
-        
-        // 4. Validar tiempo mínimo entre quizzes
-        if (estadoTema != null && estadoTema.fechaUltimoIntento > 0) {
-            val tiempoDesdeUltimo = (ahora - estadoTema.fechaUltimoIntento) / (1000 * 60 * 60 * 24)
-            if (tiempoDesdeUltimo < DIAS_ENTRE_QUIZZES) {
-                return ValidacionQuiz(false, "Debes esperar al menos $DIAS_ENTRE_QUIZZES día(s) entre quizzes")
-            }
-        }
-        
-        return ValidacionQuiz(true, "Puedes realizar el quiz")
+     //Determina si el estudiante puede realizar un quiz del tema en este momento
+   fun puedeRealizarQuiz(
+    cursoId: String,
+    temaId: String,
+    estudianteId: String,
+    programacion: ProgramacionCurso,
+    estadoTema: EstadoTema?,
+    modo: String = "oficial" 
+): ValidacionQuiz {
+    
+    // MODO PRÁCTICA: Permitir sin restricciones temporales
+    if (modo == "practica") {
+        return ValidacionQuiz(true, "Puedes practicar este tema libremente")
     }
     
-    /**
-     * Obtiene el tema activo actual según la fecha
-     */
+    // Resto de validaciones para modo oficial...
+    val rangoTema = programacion.distribucionTemporal[temaId]
+        ?: return ValidacionQuiz(false, "Tema no encontrado en la programación")
+    
+    val ahora = System.currentTimeMillis()
+    
+    if (ahora < rangoTema.fechaInicio) {
+        val diasRestantes = ((rangoTema.fechaInicio - ahora) / (1000 * 60 * 60 * 24)).toInt()
+        return ValidacionQuiz(false, "Este tema estará disponible en $diasRestantes días")
+    }
+    
+    if (ahora > rangoTema.fechaFin) {
+        return ValidacionQuiz(false, "El período de este tema ya finalizó")
+    }
+    
+    val quizzesRealizados = estadoTema?.quizzesRealizados ?: 0
+    if (quizzesRealizados >= rangoTema.quizzesRequeridos) {
+        return ValidacionQuiz(false, "Ya completaste todos los quizzes de este tema")
+    }
+    
+    if (estadoTema != null && estadoTema.fechaUltimoIntento > 0) {
+        val tiempoDesdeUltimo = (ahora - estadoTema.fechaUltimoIntento) / (1000 * 60 * 60 * 24)
+        if (tiempoDesdeUltimo < DIAS_ENTRE_QUIZZES) {
+            return ValidacionQuiz(false, "Debes esperar al menos $DIAS_ENTRE_QUIZZES día(s) entre quizzes")
+        }
+    }
+    
+    return ValidacionQuiz(true, "Puedes realizar el quiz")
+}
+    
+     // Obtiene el tema activo actual según la fecha
     fun obtenerTemaActivo(programacion: ProgramacionCurso): RangoTema? {
         val ahora = System.currentTimeMillis()
         return programacion.distribucionTemporal.values.firstOrNull { 
@@ -128,9 +124,8 @@ object ServicioProgramacionCurso {
         }
     }
     
-    /**
-     * Obtiene estadísticas de progreso del estudiante en el curso
-     */
+     //Obtiene estadísticas de progreso del estudiante en el curso
+    
     fun calcularProgresoCurso(
         programacion: ProgramacionCurso,
         temasCompletados: Map<String, EstadoTema>

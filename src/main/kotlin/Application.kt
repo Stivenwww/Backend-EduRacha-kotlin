@@ -2,7 +2,6 @@ package com.eduracha
 
 import com.eduracha.routes.*
 import com.eduracha.utils.FirebaseInit
-import com.google.firebase.database.FirebaseDatabase
 import io.github.cdimascio.dotenv.dotenv
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
@@ -18,8 +17,7 @@ import com.eduracha.jobs.CronJobReportes
 import com.eduracha.utils.getUserFromToken
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
-
-
+import com.eduracha.models.EstadoTema
 import io.ktor.server.auth.*
 import io.ktor.server.auth.jwt.*
 import com.auth0.jwt.JWT
@@ -49,7 +47,7 @@ fun Application.module() {
 
     FirebaseInit.initialize(credentialsPath, firebaseUrl)
 
-    // Repos
+    // Repositorios
     val preguntaRepo = PreguntaRepository()
     val quizRepo = QuizRepository()
     val cursoRepo = CursoRepository()
@@ -75,7 +73,7 @@ fun Application.module() {
         json()
     }
 
-    // Jwt dummy solo p/compilar y permitir authenticate()
+    // JWT dummy solo para pruebas
     install(Authentication) {
         jwt("auth-jwt") {
             verifier {
@@ -97,21 +95,24 @@ fun Application.module() {
             call.respondText("Servidor EduRacha corriendo correctamente")
         }
 
-    
         authRoutes()
         usuarioRoutes()
         cursoRoutes()
         solicitudCursoRoutes()
         chatRoutes()
         preguntasRoutes()
-        quizRoutes(quizService)
+        quizRoutes(quizService, quizRepo, cursoRepo)
         reportesRoutes(servicioReportes)
     }
 
-    configureCronJobs(servicioReportes, cursoRepo)
+    configureCronJobs(servicioReportes, cursoRepo, quizRepo)
 }
 
-fun Application.configureCronJobs(servicioReportes: ServicioReportesExcel, cursoRepo: CursoRepository) {
+fun Application.configureCronJobs(
+    servicioReportes: ServicioReportesExcel,
+    cursoRepo: CursoRepository,
+    quizRepo: QuizRepository
+) {
     val cronJob = CronJobReportes(servicioReportes, cursoRepo)
 
     cronJob.iniciar()
@@ -123,7 +124,10 @@ fun Application.configureCronJobs(servicioReportes: ServicioReportesExcel, curso
     routing {
         post("/admin/generar-reportes") {
             val user = call.getUserFromToken()
-                ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token inválido o expirado"))
+                ?: return@post call.respond(
+                    HttpStatusCode.Unauthorized,
+                    mapOf("error" to "Token inválido o expirado")
+                )
 
             if (user.rol != "admin" && user.rol != "docente") {
                 call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Acceso denegado"))
