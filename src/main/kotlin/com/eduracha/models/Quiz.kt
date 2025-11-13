@@ -44,11 +44,11 @@ data class RespuestaQuiz(
     val esCorrecta: Boolean = false
 )
 
-// Requests
 @Serializable
 data class IniciarQuizRequest(
     val cursoId: String,
-    val temaId: String
+    val temaId: String,
+    val modo: String = "oficial"
 )
 
 @Serializable
