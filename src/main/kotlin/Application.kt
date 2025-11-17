@@ -22,6 +22,7 @@ import io.ktor.server.auth.*
 import io.ktor.server.auth.jwt.*
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
+import java.io.File
 
 fun main() {
     embeddedServer(Netty, port = 8080, module = Application::module)
@@ -32,32 +33,53 @@ fun Application.module() {
     // Intenta cargar .env si existe (desarrollo local)
     val dotenv = try {
         dotenv {
-            ignoreIfMissing = true // No falla si no existe el .env
+            ignoreIfMissing = true
         }
     } catch (e: Exception) {
         null
     }
 
-    // Función helper: primero intenta System.getenv, luego dotenv
+    // Función helper: primero System.getenv, luego dotenv
     fun getEnv(key: String): String? {
         return System.getenv(key) ?: dotenv?.get(key)
     }
 
     val firebaseUrl = getEnv("FIREBASE_DATABASE_URL")
     val openAiKey = getEnv("OPENAI_API_KEY")
+    val credentialsJson = getEnv("FIREBASE_CREDENTIALS_JSON")
     val credentialsPath = getEnv("GOOGLE_APPLICATION_CREDENTIALS")
 
     println("Variables de entorno cargadas correctamente")
     println("Firebase URL: $firebaseUrl")
     println("OpenAI Key (parcial): ${openAiKey?.take(8)}...")
 
-    if (firebaseUrl.isNullOrEmpty() || credentialsPath.isNullOrEmpty()) {
-        throw IllegalStateException("No se encontraron las variables FIREBASE_DATABASE_URL o GOOGLE_APPLICATION_CREDENTIALS")
+    if (firebaseUrl.isNullOrEmpty()) {
+        throw IllegalStateException("No se encontró FIREBASE_DATABASE_URL")
     }
 
-    FirebaseInit.initialize(credentialsPath, firebaseUrl)
+    // Determinar qué método usar para las credenciales
+    val finalCredentialsPath = when {
+        // Si existe FIREBASE_CREDENTIALS_JSON (producción), crear archivo temporal
+        !credentialsJson.isNullOrEmpty() -> {
+            println("Usando FIREBASE_CREDENTIALS_JSON desde variable de entorno")
+            val tempFile = File.createTempFile("firebase-credentials", ".json")
+            tempFile.deleteOnExit()
+            tempFile.writeText(credentialsJson)
+            tempFile.absolutePath
+        }
+        // Si existe GOOGLE_APPLICATION_CREDENTIALS (desarrollo local)
+        !credentialsPath.isNullOrEmpty() -> {
+            println("Usando GOOGLE_APPLICATION_CREDENTIALS: $credentialsPath")
+            credentialsPath
+        }
+        else -> {
+            throw IllegalStateException(
+                "No se encontró FIREBASE_CREDENTIALS_JSON ni GOOGLE_APPLICATION_CREDENTIALS"
+            )
+        }
+    }
 
-    FirebaseInit.initialize(credentialsPath, firebaseUrl)
+    FirebaseInit.initialize(finalCredentialsPath, firebaseUrl)
 
     // Repositorios
     val preguntaRepo = PreguntaRepository()

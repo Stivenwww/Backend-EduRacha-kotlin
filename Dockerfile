@@ -12,8 +12,6 @@ FROM eclipse-temurin:17-jre
 WORKDIR /app
 
 COPY --from=build /app/build/libs/*.jar /app/app.jar
-# Copiar el archivo de credenciales de Firebase
-COPY --from=build /app/src/main/resources/serviceAccountKey.json /app/serviceAccountKey.json
 
 EXPOSE 8080
 
