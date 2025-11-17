@@ -29,21 +29,33 @@ fun main() {
 }
 
 fun Application.module() {
-    val dotenv = dotenv {
-        ignoreIfMissing = true
+    // Intenta cargar .env si existe (desarrollo local)
+    val dotenv = try {
+        dotenv {
+            ignoreIfMissing = true // No falla si no existe el .env
+        }
+    } catch (e: Exception) {
+        null
     }
 
-    val firebaseUrl = dotenv["FIREBASE_DATABASE_URL"]
-    val openAiKey = dotenv["OPENAI_API_KEY"]
-    val credentialsPath = dotenv["GOOGLE_APPLICATION_CREDENTIALS"]
+    // Función helper: primero intenta System.getenv, luego dotenv
+    fun getEnv(key: String): String? {
+        return System.getenv(key) ?: dotenv?.get(key)
+    }
+
+    val firebaseUrl = getEnv("FIREBASE_DATABASE_URL")
+    val openAiKey = getEnv("OPENAI_API_KEY")
+    val credentialsPath = getEnv("GOOGLE_APPLICATION_CREDENTIALS")
 
     println("Variables de entorno cargadas correctamente")
     println("Firebase URL: $firebaseUrl")
     println("OpenAI Key (parcial): ${openAiKey?.take(8)}...")
 
     if (firebaseUrl.isNullOrEmpty() || credentialsPath.isNullOrEmpty()) {
-        throw IllegalStateException("No se encontraron las variables FIREBASE_DATABASE_URL o GOOGLE_APPLICATION_CREDENTIALS en el archivo .env")
+        throw IllegalStateException("No se encontraron las variables FIREBASE_DATABASE_URL o GOOGLE_APPLICATION_CREDENTIALS")
     }
+
+    FirebaseInit.initialize(credentialsPath, firebaseUrl)
 
     FirebaseInit.initialize(credentialsPath, firebaseUrl)
 

@@ -4,9 +4,7 @@ FROM gradle:8.6-jdk17 AS build
 WORKDIR /app
 COPY . .
 
-# Dar permisos al wrapper y construir
 RUN chmod +x ./gradlew && ./gradlew shadowJar --no-daemon
-
 
 # ---- Stage 2: Runtime ----
 FROM eclipse-temurin:17-jre
@@ -14,6 +12,8 @@ FROM eclipse-temurin:17-jre
 WORKDIR /app
 
 COPY --from=build /app/build/libs/*.jar /app/app.jar
+# Copiar el archivo de credenciales de Firebase
+COPY --from=build /app/src/main/resources/serviceAccountKey.json /app/serviceAccountKey.json
 
 EXPOSE 8080
 
