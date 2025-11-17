@@ -17,6 +17,22 @@ import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.github.cdimascio.dotenv.dotenv
 import kotlinx.serialization.Serializable
+import com.eduracha.repository.RachaRepository
+
+/**
+ * DTO para serializar estudiantes con Gson
+ * ✅ Evita el error de serialización de tipos mixtos
+ */
+@Serializable
+data class EstudianteDTO(
+    val userId: String,
+    val id: String,
+    val nombre: String,
+    val email: String,
+    val rol: String = "estudiante",
+    val estado: String = "activo",
+    val fechaRegistro: String? = null
+)
 
 @Serializable
 data class TemaConExplicacionRequest(
@@ -770,6 +786,209 @@ fun Application.cursoRoutes() {
                     )
                 }
             }
+
+            // Crear instancia real del repositorio correcto
+            val rachaRepo = RachaRepository()
+
+            /**
+             * GET /api/cursos/ranking/{cursoId}
+             * Obtener ranking por EXPERIENCIA (por defecto)
+             */
+            get("/ranking/{cursoId}") {
+                val cursoId = call.parameters["cursoId"]
+                
+                if (cursoId.isNullOrBlank()) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "cursoId es requerido")
+                    )
+                    return@get
+                }
+
+                try {
+                    println("🔹 GET /api/cursos/ranking/$cursoId (EXPERIENCIA)")
+                    val ranking = rachaRepo.obtenerRankingPorCurso(cursoId, "experiencia")
+                    
+                    println("✅ Devolviendo ${ranking.size} estudiantes")
+                    call.respond(HttpStatusCode.OK, ranking)
+                    
+                } catch (e: Exception) {
+                    println("❌ Error en ranking experiencia: ${e.message}")
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener ranking: ${e.message}")
+                    )
+                }
+            }
+
+            /**
+             * GET /api/cursos/ranking/{cursoId}/racha
+             * Obtener ranking por RACHA
+             */
+            get("/ranking/{cursoId}/racha") {
+                val cursoId = call.parameters["cursoId"]
+                
+                if (cursoId.isNullOrBlank()) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "cursoId es requerido")
+                    )
+                    return@get
+                }
+
+                try {
+                    println(" GET /api/cursos/ranking/$cursoId/racha")
+                    val ranking = rachaRepo.obtenerRankingPorCurso(cursoId, "racha")
+                    
+                    println(" Devolviendo ${ranking.size} estudiantes ordenados por racha")
+                    call.respond(HttpStatusCode.OK, ranking)
+                    
+                } catch (e: Exception) {
+                    println(" Error en ranking racha: ${e.message}")
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener ranking: ${e.message}")
+                    )
+                }
+            }
+
+            /**
+             * GET /api/cursos/ranking/{cursoId}/vidas
+             * Obtener ranking por VIDAS
+             */
+            get("/ranking/{cursoId}/vidas") {
+                val cursoId = call.parameters["cursoId"]
+                
+                if (cursoId.isNullOrBlank()) {
+                    call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "cursoId es requerido")
+                    )
+                    return@get
+                }
+
+                try {
+                    println(" GET /api/cursos/ranking/$cursoId/vidas")
+                    val ranking = rachaRepo.obtenerRankingPorCurso(cursoId, "vidas")
+                    
+                    println("Devolviendo ${ranking.size} estudiantes ordenados por vidas")
+                    call.respond(HttpStatusCode.OK, ranking)
+                    
+                } catch (e: Exception) {
+                    println("Error en ranking vidas: ${e.message}")
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener ranking: ${e.message}")
+                    )
+                }
+            }
+
+            /**
+             * GET /api/cursos/ranking/general/{filtro}
+             * Obtener ranking de TODOS los cursos
+             * Parámetros: filtro = experiencia | racha | vidas
+             */
+            get("/ranking/general/{filtro}") {
+                val filtro = call.parameters["filtro"] ?: "experiencia"
+
+                try {
+                    println(" GET /api/cursos/ranking/general/$filtro")
+                    val ranking = rachaRepo.obtenerRankingGeneral(filtro)
+                    
+                    println(" Ranking general: ${ranking.size} estudiantes")
+                    call.respond(HttpStatusCode.OK, ranking)
+                    
+                } catch (e: Exception) {
+                    println(" Error en ranking general: ${e.message}")
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener ranking general: ${e.message}")
+                    )
+                }
+            }
+
+            /**
+             * GET /api/cursos/ranking/general
+             * Ranking general por experiencia
+             */
+            get("/ranking/general") {
+                try {
+                    println("🔹 GET /api/cursos/ranking/general (EXPERIENCIA)")
+                    val ranking = rachaRepo.obtenerRankingGeneral("experiencia")
+                    
+                    println("Ranking general: ${ranking.size} estudiantes")
+                    call.respond(HttpStatusCode.OK, ranking)
+                    
+                } catch (e: Exception) {
+                    println(" Error en ranking general: ${e.message}")
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener ranking general: ${e.message}")
+                    )
+                }
+            }
+
+            /**
+              Obtener estudiantes de un curso
+             * GET /api/cursos/{id}/estudiantes
+             */
+              get("{id}/estudiantes") {
+                val cursoId = call.parameters["id"] ?: return@get call.respond(
+                    HttpStatusCode.BadRequest,
+                    mapOf("error" to "Falta ID del curso")
+                )
+
+                try {
+                    println(" GET /api/cursos/$cursoId/estudiantes")
+                    
+                    // Obtener estudiantes desde el repositorio
+                    val estudiantesRaw = repo.obtenerEstudiantesPorCurso(cursoId)
+                    
+                    println("Total estudiantes raw: ${estudiantesRaw.size}")
+                    
+                    val estudiantes = estudiantesRaw.map { estudianteData ->
+                        val userId = estudianteData["userId"] as? String 
+                            ?: estudianteData["id"] as? String 
+                            ?: ""
+                        
+                        EstudianteDTO(
+                            userId = userId,
+                            id = userId,
+                            nombre = estudianteData["nombre"] as? String ?: "N/A",
+                            email = estudianteData["email"] as? String ?: "",
+                            rol = estudianteData["rol"] as? String ?: "estudiante",
+                            estado = estudianteData["estado"] as? String ?: "activo",
+                            fechaRegistro = when (val fecha = estudianteData["fechaRegistro"]) {
+                                is Long -> fecha.toString()
+                                is String -> fecha
+                                else -> null
+                            }
+                        )
+                    }
+                    
+                    println("Estudiantes convertidos: ${estudiantes.size}")
+                    estudiantes.forEachIndexed { index, est ->
+                        println("   ${index + 1}. ${est.nombre} (UID: ${est.userId})")
+                    }
+                    
+                    call.respond(HttpStatusCode.OK, estudiantes)
+                    
+                } catch (e: Exception) {
+                    println("Error al obtener estudiantes: ${e.message}")
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "Error al obtener estudiantes: ${e.message}")
+                    )
+                }
+            }
         }
+
     }
-}
+
+} 

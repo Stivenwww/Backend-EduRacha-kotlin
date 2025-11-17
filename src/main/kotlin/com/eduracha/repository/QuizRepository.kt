@@ -56,19 +56,55 @@ class QuizRepository {
         } ?: cont.resumeWithException(Exception("Quiz sin ID"))
     }
 
+  // LOGS PARA REPORTES
     suspend fun obtenerQuizzesPorEstudiante(estudianteId: String, cursoId: String? = null): List<Quiz> =
         suspendCancellableCoroutine { cont ->
+            println("[QuizRepo] Buscando quizzes:")
+            println("    Estudiante ID: $estudianteId")
+            println("    Curso ID: ${cursoId ?: "TODOS"}")
+            
             refQuizzes.orderByChild("estudianteId").equalTo(estudianteId)
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
-                        val quizzes = snapshot.children.mapNotNull {
-                            it.getValue(Quiz::class.java)
-                        }.filter { cursoId == null || it.cursoId == cursoId }
-
+                        println("    Total nodos encontrados: ${snapshot.childrenCount}")
+                        
+                        val quizzes = mutableListOf<Quiz>()
+                        var contador = 0
+                        
+                        for (quizSnap in snapshot.children) {
+                            contador++
+                            val quiz = quizSnap.getValue(Quiz::class.java)
+                            
+                            if (quiz != null) {
+                                println("   Quiz #$contador: ${quiz.id}")
+                                println("      - EstudianteId: ${quiz.estudianteId}")
+                                println("      - CursoId: ${quiz.cursoId}")
+                                println("      - TemaId: ${quiz.temaId}")
+                                println("      - Estado: ${quiz.estado}")
+                                println("      - Inicio: ${quiz.inicio}")
+                                println("      - Fin: ${quiz.fin}")
+                                println("      - Correctas: ${quiz.preguntasCorrectas}")
+                                println("      - Total preguntas: ${quiz.preguntas.size}")
+                                println("      - XP: ${quiz.experienciaGanada}")
+                                
+                                // Filtrar por curso si se especifica
+                                if (cursoId == null || quiz.cursoId == cursoId) {
+                                    quizzes.add(quiz)
+                                    println("       INCLUIDO")
+                                } else {
+                                    println("       EXCLUIDO (curso ${quiz.cursoId} != $cursoId)")
+                                }
+                            } else {
+                                println("    Quiz #$contador: No se pudo parsear")
+                            }
+                        }
+                        
+                        println("   Total quizzes retornados: ${quizzes.size}")
                         cont.resume(quizzes)
                     }
 
                     override fun onCancelled(error: DatabaseError) {
+                        println("    Error Firebase: ${error.message}")
                         cont.resumeWithException(error.toException())
                     }
                 })

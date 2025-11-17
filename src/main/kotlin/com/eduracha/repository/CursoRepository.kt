@@ -158,27 +158,68 @@ class CursoRepository {
         })
     }
 
-    // Obtener todos los estudiantes de un curso (con su info completa)
-    suspend fun obtenerEstudiantesPorCurso(cursoId: String): List<Map<String, Any?>> =
-        suspendCancellableCoroutine { cont ->
-            val refEstudiantes = database.getReference("cursos/$cursoId/estudiantes")
+suspend fun obtenerEstudiantesPorCurso(cursoId: String): List<Map<String, Any?>> =
+    suspendCancellableCoroutine { cont ->
+        println(" OBTENIENDO ESTUDIANTES ")
+        println(" Curso ID: $cursoId")
+        
+        val refEstudiantes = database.getReference("cursos/$cursoId/estudiantes")
 
-            refEstudiantes.addListenerForSingleValueEvent(object : ValueEventListener {
-                override fun onDataChange(snapshot: DataSnapshot) {
-                    if (!snapshot.exists()) {
-                        cont.resume(emptyList())
-                        return
+        refEstudiantes.addListenerForSingleValueEvent(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                println(" Snapshot existe: ${snapshot.exists()}")
+                println(" Children count: ${snapshot.childrenCount}")
+                
+                if (!snapshot.exists()) {
+                    println(" No hay estudiantes en este curso")
+                    cont.resume(emptyList())
+                    return
+                }
+
+                val estudiantes = mutableListOf<Map<String, Any?>>()
+                
+                snapshot.children.forEachIndexed { index, child ->
+                    println("\n ===== ESTUDIANTE #${index + 1} =====")
+                    println("   Firebase Key (UID): ${child.key}")
+                    
+                    val data = child.value as? Map<String, Any?> ?: emptyMap()
+                    
+                    // tener el userId desde el campo "id" o usar la key 
+                    val userId = data["id"] as? String ?: child.key ?: ""
+                    val nombre = data["nombre"] as? String ?: "N/A"
+                    val email = data["email"] as? String
+                    val estado = data["estado"] as? String
+                    
+                    println("    Datos originales de Firebase:")
+                    data.forEach { (key, value) ->
+                        println("      - $key: $value")
                     }
-
-                    val estudiantes = snapshot.children.mapNotNull { it.value as? Map<String, Any?> }
-                    cont.resume(estudiantes)
+                    
+                    println("    Datos parseados:")
+                    println("      - userId: $userId")
+                    println("      - nombre: $nombre")
+                    println("      - email: $email")
+                    
+                    //  Crear nuevo mapa incluyendo "userId" para compatibilidad
+                    val estudianteMap = mutableMapOf<String, Any?>()
+                    estudianteMap.putAll(data)  // Copiar todos los datos originales
+                    estudianteMap["userId"] = userId  // Agregar/sobrescribir userId
+                    
+                    estudiantes.add(estudianteMap)
                 }
+                
+                println("\nTotal estudiantes procesados: ${estudiantes.size}")
+                println("============================================\n")
+                
+                cont.resume(estudiantes)
+            }
 
-                override fun onCancelled(error: DatabaseError) {
-                    cont.resumeWithException(error.toException())
-                }
-            })
-        }
+            override fun onCancelled(error: DatabaseError) {
+                println(" Error Firebase: ${error.message}")
+                cont.resumeWithException(error.toException())
+            }
+        })
+    }
 // MÉTODOS DE PERFIL DE USUARIO EN CURSO 
 
 suspend fun actualizarVidasCurso(uid: String, cursoId: String, vidas: Vidas) {
@@ -243,7 +284,7 @@ suspend fun obtenerPerfilCurso(uid: String, cursoId: String): PerfilCurso? =
         ref.updateChildren(actualizacion, DatabaseReference.CompletionListener { error, _ ->
             if (error != null) cont.resumeWithException(error.toException())
             else {
-                println("🏆 Curso $cursoId marcado como completado para usuario $userId")
+                println(" Curso $cursoId marcado como completado para usuario $userId")
                 cont.resume(Unit)
             }
         })

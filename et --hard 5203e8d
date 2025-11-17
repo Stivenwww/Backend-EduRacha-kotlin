@@ -1,0 +1,33 @@
+[33m1f9ee67[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m HEAD@{0}: reset: moving to HEAD
+[33m1f9ee67[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m HEAD@{1}: commit: Flujo de quiz completo
+[33m5203e8d[m HEAD@{2}: commit: modificacion logica quiz
+[33m054d0d7[m HEAD@{3}: commit: mejora estructura nodo usuarios/progresos
+[33m82f8350[m HEAD@{4}: commit: ep y racha correccion orden en los nodos
+[33m99fa1ed[m HEAD@{5}: commit: correccion de la correcion de el tiempo de respuest openai
+[33m3f400ab[m HEAD@{6}: commit: extender tiempo de respuesta del cliente openai
+[33m1fabb4d[m HEAD@{7}: commit: actualizacion modelo de curso y rutas
+[33m83f36b8[m HEAD@{8}: commit: Corrección JWT y autenticación con tokens de Firebase en backend
+[33ma10bb84[m HEAD@{9}: commit: correcion validacion de tema creado por docente a estado prendiente
+[33m6288790[m HEAD@{10}: commit: Se implementan validaciones para el banco de preguntas: control mínimo de preguntas por tema según cantidad de estudiantes, evitar preguntas repetidas hasta agotar el banco y solicitud automática al docente para crear más preguntas cuando el estudiante ya ha visto todas.
+[33m5fd2ee6[m HEAD@{11}: commit: exel, preguntas unicas. mejor orden racha,xp,progreso
+[33mcf8c261[m HEAD@{12}: commit: ranking de estudiantes segun el filtro // GET /quiz/curso/{cursoId}/ranking?filtro=experiencia /ranking?filtro=racha /ranking?filtro=vidas
+[33m92b4848[m HEAD@{13}: commit: Empoint para la retroalimentacion de las respuestas incorrectas en un quiz
+[33mda2213a[m HEAD@{14}: commit: correccion ruta quiz error 500
+[33m740eb12[m HEAD@{15}: commit: correccion rutas quiz
+[33m666685f[m HEAD@{16}: commit: modificacion racha y xp
+[33m925a3af[m HEAD@{17}: commit: quiz por probar, racha, progreso empoint y ruta, explicacion de tema, preguntas validacion si explicacion no se puede crear preguntsas etc
+[33m354db59[m HEAD@{18}: commit: se agrego ¿, la ecxplicacion de un tema ya sea ia/docente, inicializacion de progreso y racha automaticanme, y notificaciones de bienvinida a un curso
+[33mbfac5dd[m HEAD@{19}: commit: se agrego explicacion de un tema ia/docente, el campo de estado de un estudiante, validaciones de preguntas, se crean solo si hay un tema con explicacion etc.
+[33mc3081a5[m HEAD@{20}: reset: moving to HEAD
+[33mc3081a5[m HEAD@{21}: commit: inicializacion de racha, progresos
+[33m423a3dd[m HEAD@{22}: commit: Correccion api solicitudCurso para poder traer los usuarios con su infromacion completa
+[33md05a00c[m HEAD@{23}: commit: unificacion de de rutas pregunta ia y preguntas docent, todas las preguntas creadas inicain con estado pendiente
+[33mde0ae4e[m HEAD@{24}: commit: preguntas banco de preguntas curso id tema
+[33m9be04ba[m HEAD@{25}: commit: implementación del endpoint GET /curso/{id}/estudiantes para obtener los correos electrónicos de los estudiantes inscritos en un curso desde Firebase Realtime Database, ajustando la función obtenerCorreosEstudiantesPorCurso para leer correctamente los IDs del nodo estudiantes y cruzarlos con los datos del nodo usuarios, considerando la estructura registrada con los campos uid, nombreCompleto, apodo, correo, rol y fechaRegistro. Se validó la respuesta para retornar un arreglo vacío si no existen estudiantes asociados y se probó exitosamente en Postman con el curso -ObFRmPO1VSinJC3vgB1. Además, se verificó el cambio de estado de las preguntas generadas por IA y también el correcto funcionamiento del cambio de estado en las preguntas de los docentes.
+[33m3985756[m HEAD@{26}: commit: Implementación completa del sistema de generación automática de preguntas con IA y almacenamiento en Firebase. Se agregó el servicio OpenAIService para generar preguntas mediante el modelo GPT-4o-mini, integrando la respuesta de la IA con el flujo de creación de preguntas existente. Se configuró el endpoint /api/ia/preguntas/generar para permitir la creación automática desde Postman. Se añadieron los modelos serializables PreguntaAI, OpcionAI y MetadatosIAAI, garantizando compatibilidad con la estructura JSON retornada por OpenAI. Además, se implementó el guardado de las preguntas generadas en Firebase Realtime Database, con validaciones de datos, manejo de errores mejorado y limpieza de formato JSON. Se realizaron ajustes menores en logs y estructura de datos para optimizar la depuración y trazabilidad del proceso.
+[33m6243316[m HEAD@{27}: commit: Implementa API para gestión de solicitudes de unión a cursos: estudiantes pueden unirse y ver sus solicitudes; profesores pueden ver, aceptar o rechazar solicitudes.
+[33m971660a[m HEAD@{28}: filter-branch: rewrite
+[33m6116932[m HEAD@{29}: Branch: renamed refs/heads/main to refs/heads/main
+[33m6116932[m HEAD@{31}: commit: Primeras Apis Funcionales Login-Curos
+[33mae35066[m HEAD@{32}: Branch: renamed refs/heads/master to refs/heads/main
+[33mae35066[m HEAD@{34}: commit (initial): Primeras Apis Funcionales Login-Curos
