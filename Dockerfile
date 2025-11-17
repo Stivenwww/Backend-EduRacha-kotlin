@@ -1,19 +1,20 @@
-# ---- Etapa 1: Build ----
+# ---- Stage 1: Build ----
 FROM gradle:8.6-jdk17 AS build
-WORKDIR /app
 
+WORKDIR /app
 COPY . .
 
-# ejecutar con el wrapper
-RUN ./gradlew shadowJar --no-daemon
+# Dar permisos al wrapper y construir
+RUN chmod +x ./gradlew && ./gradlew shadowJar --no-daemon
 
-# ---- Etapa 2: Runtime ----
+
+# ---- Stage 2: Runtime ----
 FROM eclipse-temurin:17-jre
+
 WORKDIR /app
 
-# copiar el shadow jar generado
-COPY --from=build /app/build/libs/*-shadow.jar app.jar
+COPY --from=build /app/build/libs/*.jar /app/app.jar
 
 EXPOSE 8080
 
-CMD ["java", "-jar", "app.jar"]
+CMD ["java", "-jar", "/app/app.jar"]
