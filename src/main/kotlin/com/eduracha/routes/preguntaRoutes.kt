@@ -145,10 +145,23 @@ fun Application.preguntasRoutes() {
 
         // RUTAS DE IA (Generación Automática)
         route("/api/preguntas/ia") {
-            val dotenv = dotenv()
+          /*   val dotenv = dotenv()
             val openAiKey = dotenv["OPENAI_API_KEY"] ?: error("Falta la API Key de OpenAI")
             val client = HttpClient(CIO)
+            val iaService = OpenAIService(client, openAiKey)*/
+
+
+            
+            // Primero intenta leer la variable real del entorno (Sevella)
+            val openAiKey = System.getenv("OPENAI_API_KEY")
+                ?: dotenv()["OPENAI_API_KEY"]
+                ?: error("Falta la API Key de OpenAI")
+
+            val client = HttpClient(CIO)
             val iaService = OpenAIService(client, openAiKey)
+
+
+            
 
             // POST /api/preguntas/ia/generar
             post("/generar") {
