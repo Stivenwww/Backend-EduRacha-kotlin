@@ -12,7 +12,6 @@ tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJ
     mergeServiceFiles()
 }
 
-
 group = "com.eduracha"
 version = "0.0.1"
 
@@ -63,5 +62,11 @@ dependencies {
 
     testImplementation("io.ktor:ktor-server-tests:2.3.12")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:1.9.23")
+}
+
+ktor {
+    fatJar {
+        archiveFileName.set("app.jar")
+    }
 }
 

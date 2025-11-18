@@ -25,7 +25,7 @@ import com.auth0.jwt.algorithms.Algorithm
 import java.io.File
 
 fun main() {
-    embeddedServer(Netty, port = 8080, module = Application::module)
+    embeddedServer(Netty, port = System.getenv("PORT")?.toInt() ?: 8080, module = Application::module)
         .start(wait = true)
 }
 
