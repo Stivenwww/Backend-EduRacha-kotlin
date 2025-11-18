@@ -35,13 +35,24 @@ fun main() {
 fun Application.module() {
 
     // Cargar dotenv solo en desarrollo
-    val dotenv = try {
+   /*  val dotenv = try {
         dotenv { ignoreIfMissing = true }
     } catch (e: Exception) {
         
-    }
-    fun getEnv(key: String): String? =
-        System.getenv(key)
+    }*/
+    //fun getEnv(key: String): String? =
+        //System.getenv(key)
+
+        val dotenv = try {
+            dotenv { ignoreIfMissing = true }
+        } catch (e: Exception) {
+            null
+        }
+
+        fun getEnv(key: String): String =
+    System.getenv(key)
+        ?: dotenv?.get(key)
+        ?: throw IllegalStateException("Variable $key no encontrada")
 
 
     val firebaseUrl = getEnv("FIREBASE_DATABASE_URL")
