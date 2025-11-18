@@ -78,19 +78,10 @@ fun Application.cursoRoutes() {
     //val dotenv = dotenv()
     //val openAiKey = dotenv["OPENAI_API_KEY"]
  // Cargar dotenv
-    //dotenv solo local
-    val dotenv = try {
-        dotenv { ignoreIfMissing = true }
-    } catch (_: Exception) {
-        null
-    }
-
-    
     fun getEnv(key: String): String? =
-        System.getenv(key) ?: dotenv?.get(key)
+    System.getenv(key)
 
-    val openAiKey = getEnv("OPENAI_API_KEY")
-
+val openAiKey = getEnv("OPENAI_API_KEY")
 
     val client = HttpClient(CIO) {
         engine {

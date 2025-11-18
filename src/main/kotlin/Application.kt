@@ -38,11 +38,11 @@ fun Application.module() {
     val dotenv = try {
         dotenv { ignoreIfMissing = true }
     } catch (e: Exception) {
-        null
+        
     }
-
     fun getEnv(key: String): String? =
-        System.getenv(key) ?: dotenv?.get(key)
+        System.getenv(key)
+
 
     val firebaseUrl = getEnv("FIREBASE_DATABASE_URL")
         ?: throw IllegalStateException("FIREBASE_DATABASE_URL no encontrada")
