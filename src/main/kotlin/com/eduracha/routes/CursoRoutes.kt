@@ -75,8 +75,22 @@ fun Application.cursoRoutes() {
     val explicacionRepo = ExplicacionRepository()
     val solicitudPreguntasRepo = SolicitudPreguntasRepository()
 
-    val dotenv = dotenv()
-    val openAiKey = dotenv["OPENAI_API_KEY"]
+    //val dotenv = dotenv()
+    //val openAiKey = dotenv["OPENAI_API_KEY"]
+ // Cargar dotenv
+    val dotenv = try {
+        dotenv {
+            directory = System.getProperty("user.dir")
+            filename = ".env"
+            ignoreIfMissing = false
+            ignoreIfMalformed = true
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    val openAiKey = dotenv?.get("OPENAI_API_KEY")
+
 
     val client = HttpClient(CIO) {
         engine {
@@ -89,9 +103,13 @@ fun Application.cursoRoutes() {
         }
     }
 
-    val iaService = if (!openAiKey.isNullOrEmpty()) {
-        OpenAIService(client, openAiKey)
-    } else null
+    //val iaService = if (!openAiKey.isNullOrEmpty()) {
+       // OpenAIService(client, openAiKey)
+
+         val iaService: OpenAIService? =
+        if (!openAiKey.isNullOrEmpty()) OpenAIService(client, openAiKey)
+        else null
+    
     
     routing {
         route("/api/cursos") {
