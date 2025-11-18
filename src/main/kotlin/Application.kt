@@ -46,8 +46,8 @@ fun Application.module() {
 
     val firebaseUrl = getEnv("FIREBASE_DATABASE_URL")
     val openAiKey = getEnv("OPENAI_API_KEY")
-    val credentialsJson = getEnv("FIREBASE_CREDENTIALS_JSON")
-    //val credentialsPath = getEnv("GOOGLE_APPLICATION_CREDENTIALS")
+    // val credentialsJson = getEnv("FIREBASE_CREDENTIALS_JSON")
+    // val credentialsPath = getEnv("GOOGLE_APPLICATION_CREDENTIALS")
 
      val base64 = System.getenv("FIREBASE_CREDENTIALS_BASE64")
         ?: throw IllegalStateException("Firebase credentials not found")
@@ -66,7 +66,7 @@ fun Application.module() {
     }
 
     // Determinar qué método usar para las credenciales
-    val finalCredentialsPath = when {
+   /*  val finalCredentialsPath = when {
         // Si existe FIREBASE_CREDENTIALS_JSON (producción), crear archivo temporal
         !credentialsJson.isNullOrEmpty() -> {
             println("Usando FIREBASE_CREDENTIALS_JSON desde variable de entorno")
@@ -85,7 +85,13 @@ fun Application.module() {
                 "No se encontró FIREBASE_CREDENTIALS_JSON ni GOOGLE_APPLICATION_CREDENTIALS"
             )
         }
-    }
+    } */
+
+    val base64 = System.getenv("FIREBASE_CREDENTIALS_BASE64")
+        ?: throw IllegalStateException("Firebase credentials not found")
+
+    val bytes = Base64.getDecoder().decode(base64)
+    val finalCredentialsPath = GoogleCredentials.fromStream(bytes.inputStream())
 
     FirebaseInit.initialize(finalCredentialsPath, firebaseUrl)
 
