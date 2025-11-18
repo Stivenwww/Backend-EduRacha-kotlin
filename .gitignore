@@ -34,7 +34,7 @@ out/
 
 # Archivos de configuración privada
 .env
-#src/main/resources/serviceAccountKey.json
+src/main/resources/serviceAccountKey.json
 
 ### VS Code ###
 .vscode/
