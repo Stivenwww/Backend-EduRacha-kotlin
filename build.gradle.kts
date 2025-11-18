@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.ktor)
     kotlin("plugin.serialization") version "2.0.20"
-    // id("com.github.johnrengelman.shadow") version "8.1.1"
+    //id("com.github.johnrengelman.shadow") version "8.1.1"
 }
 
 tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
@@ -64,9 +64,23 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:1.9.23")
 }
 
+/* 
 ktor {
     fatJar {
         archiveFileName.set("app.jar")
     }
 }
+*/
 
+tasks.withType<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar> {
+    archiveBaseName.set("app")
+    archiveClassifier.set("all")
+    archiveVersion.set("")
+    mergeServiceFiles()
+
+    manifest {
+        attributes(
+            "Main-Class" to "io.ktor.server.netty.EngineMain"
+        )
+    }
+}
