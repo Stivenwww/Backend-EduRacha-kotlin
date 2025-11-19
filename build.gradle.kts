@@ -30,11 +30,14 @@ dependencies {
     implementation("io.ktor:ktor-server-netty:2.3.12")
 
     implementation("io.ktor:ktor-server-config-yaml:2.3.12")
+
+    // Logger oficial del backend (para imprimir logs en consola)
     implementation("ch.qos.logback:logback-classic:1.4.14")
 
     implementation("io.ktor:ktor-server-content-negotiation:2.3.12")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
 
+    // Autenticación
     implementation("io.ktor:ktor-server-auth:2.3.12")
     implementation("io.ktor:ktor-server-auth-jwt:2.3.12")
 
@@ -50,11 +53,11 @@ dependencies {
     implementation("io.ktor:ktor-client-core:3.3.0")
     implementation("io.ktor:ktor-client-cio:3.3.0")
 
-    // Apache POI para Excel nuevo
+    // Apache POI para Excel 
     implementation("org.apache.poi:poi:5.2.3")
     implementation("org.apache.poi:poi-ooxml:5.2.3")
 
-    // nuevo   
+    // 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
 
 

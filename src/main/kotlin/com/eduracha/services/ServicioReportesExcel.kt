@@ -111,7 +111,7 @@ class ServicioReportesExcel(
     ): List<DatosQuizSimple> = suspendCancellableCoroutine { cont ->
         
         println(" [ServicioReportes] Obteniendo quizzes simplificados:")
-        println("   📌 Estudiante: $estudianteId")
+        println("    Estudiante: $estudianteId")
         println("    Curso: $cursoId")
         
         val database = FirebaseDatabase.getInstance()
@@ -201,7 +201,7 @@ class ServicioReportesExcel(
         val curso = cursoRepo.obtenerCursoPorId(cursoId) ?: throw IllegalStateException("Curso no encontrado")
         val estudiantes = cursoRepo.obtenerEstudiantesPorCurso(cursoId)
         
-        println("👥 Total estudiantes en curso: ${estudiantes.size}")
+        println("Total estudiantes en curso: ${estudiantes.size}")
         
         val datosEstudiantes = mutableListOf<EstudianteReporteData>()
 

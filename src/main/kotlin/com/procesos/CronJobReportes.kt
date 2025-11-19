@@ -30,7 +30,7 @@ class CronJobReportes(
     }
 
     fun iniciar() {
-        println("⏱ Iniciando Cron Job de reportes...")
+        println(" Iniciando Cron Job de reportes...")
 
         val ahora = LocalDateTime.now(ZoneId.systemDefault())
         var proximaEjecucion = ahora
