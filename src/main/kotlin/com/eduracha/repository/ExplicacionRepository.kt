@@ -1,5 +1,8 @@
 package com.eduracha.repository
 
+import com.eduracha.utils.lecturaFirebase
+import com.eduracha.utils.reanudarConError
+
 import com.eduracha.models.Tema
 import com.google.firebase.database.*
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -14,12 +17,16 @@ class ExplicacionRepository {
 
     // Obtener un tema específico
     suspend fun obtenerTema(cursoId: String, temaId: String): Tema? =
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             ref.child(cursoId).child("temas").child(temaId)
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                         cont.resume(snapshot.getValue(Tema::class.java))
-                    }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "ExplicacionRepository.kt")
+                }
+            }
 
                     override fun onCancelled(error: DatabaseError) {
                         cont.resumeWithException(error.toException())
@@ -34,12 +41,12 @@ class ExplicacionRepository {
         explicacion: String,
         fuente: String,
         estado: String = "pendiente"
-    ) = suspendCancellableCoroutine<Unit> { cont ->
+    ) = lecturaFirebase<Unit> { cont ->
         val refTema = ref.child(cursoId).child("temas").child(temaId)
         val timestamp = Instant.now().toString()
 
         val updates = mapOf(
-            "explicacion" to explicacion,
+            "explicacion" to com.eduracha.utils.TextoPlano.sinMarkdown(explicacion),
             "explicacionFuente" to fuente,
             "explicacionUltimaActualizacion" to timestamp,
             "explicacionEstado" to estado
@@ -56,7 +63,7 @@ class ExplicacionRepository {
         cursoId: String,
         temaId: String,
         nuevoEstado: String
-    ) = suspendCancellableCoroutine<Unit> { cont ->
+    ) = lecturaFirebase<Unit> { cont ->
         val refTema = ref.child(cursoId).child("temas").child(temaId)
         refTema.updateChildren(
             mapOf("explicacionEstado" to nuevoEstado),
@@ -68,13 +75,17 @@ class ExplicacionRepository {
 
     // Obtener todos los temas con sus explicaciones (sin filtro)
     suspend fun obtenerTemasConExplicaciones(cursoId: String): List<Tema> =
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             ref.child(cursoId).child("temas")
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                         val temas = snapshot.children.mapNotNull { it.getValue(Tema::class.java) }
                         cont.resume(temas)
-                    }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "ExplicacionRepository.kt")
+                }
+            }
 
                     override fun onCancelled(error: DatabaseError) {
                         cont.resumeWithException(error.toException())
@@ -84,10 +95,11 @@ class ExplicacionRepository {
 
     // obtener temas filtrando explicación (solo muestra si está aprobada)
     suspend fun obtenerTemasFiltrandoExplicacion(cursoId: String): List<Tema> =
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             ref.child(cursoId).child("temas")
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                         val temas = snapshot.children.mapNotNull { it.getValue(Tema::class.java) }
                             .map { tema ->
                                 // Si la explicación no está aprobada, la ocultamos
@@ -96,7 +108,10 @@ class ExplicacionRepository {
                                 } else tema
                             }
                         cont.resume(temas)
-                    }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "ExplicacionRepository.kt")
+                }
+            }
 
                     override fun onCancelled(error: DatabaseError) {
                         cont.resumeWithException(error.toException())
@@ -106,14 +121,18 @@ class ExplicacionRepository {
 
     //  obtener temas por estado específico
     suspend fun obtenerTemasPorEstadoExplicacion(cursoId: String, estado: String): List<Tema> =
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             ref.child(cursoId).child("temas")
                 .orderByChild("explicacionEstado").equalTo(estado)
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                         val temas = snapshot.children.mapNotNull { it.getValue(Tema::class.java) }
                         cont.resume(temas)
-                    }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "ExplicacionRepository.kt")
+                }
+            }
 
                     override fun onCancelled(error: DatabaseError) {
                         cont.resumeWithException(error.toException())
@@ -123,15 +142,19 @@ class ExplicacionRepository {
 
     // Verificar si un tema tiene explicación aprobada y no vacía
     suspend fun tieneExplicacionAprobada(cursoId: String, temaId: String): Boolean =
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             ref.child(cursoId).child("temas").child(temaId)
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                         val tema = snapshot.getValue(Tema::class.java)
                         val aprobada = tema?.explicacionEstado == "aprobada" &&
                                 !tema.explicacion.isNullOrBlank()
                         cont.resume(aprobada)
-                    }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "ExplicacionRepository.kt")
+                }
+            }
 
                     override fun onCancelled(error: DatabaseError) {
                         cont.resumeWithException(error.toException())

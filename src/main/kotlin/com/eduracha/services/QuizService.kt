@@ -153,7 +153,7 @@ class QuizService(
         val programacion = curso.programacion
             ?: throw IllegalStateException("El curso no tiene programación configurada")
 
-        val progreso = ServicioProgreso.obtenerProgreso(userId, cursoId)
+        val progreso = ServicioProgreso.obtenerOReconstruirProgreso(userId, cursoId)
             ?: throw IllegalStateException("No estás inscrito en este curso")
 
         val validacionMinimo = servicioSeleccion.puedePublicarTema(cursoId, temaId)
@@ -190,7 +190,9 @@ class QuizService(
             )
         }
 
-        val vioExplicacion = quizRepo.verificarExplicacionVista(userId, temaId)
+        val vioExplicacion = explicacionVigenteVista(
+            userId, temaId, curso.temas?.get(temaId)?.explicacion
+        )
         if (!vioExplicacion) {
             throw IllegalStateException("Debes ver la explicación antes de iniciar el quiz")
         }
@@ -430,8 +432,8 @@ class QuizService(
     suspend fun obtenerVidas(cursoId: String, userId: String): Map<String, Any> {
         ServicioProgreso.regenerarVidas(userId, cursoId, VIDA_REGEN_MINUTOS)
 
-        val progreso = ServicioProgreso.obtenerProgreso(userId, cursoId)
-            ?: throw IllegalStateException("Progreso no encontrado")
+        val progreso = ServicioProgreso.obtenerOReconstruirProgreso(userId, cursoId)
+            ?: throw IllegalStateException("No estás inscrito en este curso")
 
         val vidasActuales = (progreso["vidas"] as? Number)?.toInt() ?: 5
         val vidasMax = (progreso["vidasMax"] as? Number)?.toInt() ?: 5
@@ -485,8 +487,35 @@ class QuizService(
         )
     }
 
-    suspend fun marcarExplicacionVista(userId: String, temaId: String) {
-        quizRepo.marcarExplicacionVista(userId, temaId)
+    /**
+     * La explicación es obligatoria solo la primera vez. Después queda como repaso opcional,
+     * salvo que el docente la haya cambiado (huella distinta): entonces se pide leer la nueva.
+     * Registros antiguos sin huella se consideran vigentes.
+     */
+    suspend fun explicacionVigenteVista(userId: String, temaId: String, explicacionActual: String?): Boolean {
+        val registro = quizRepo.obtenerRegistroExplicacion(userId, temaId)
+        if (!registro.visto) return false
+        val actual = com.eduracha.utils.TextoPlano.huella(explicacionActual) ?: return true
+        return registro.huella == null || registro.huella == actual
+    }
+
+    /** Estado para la app: si ya la vio, y si la explicación cambió desde entonces. */
+    suspend fun estadoExplicacion(userId: String, cursoId: String, temaId: String): Map<String, Boolean> {
+        val registro = quizRepo.obtenerRegistroExplicacion(userId, temaId)
+        val explicacion = cursoRepo.obtenerTema(cursoId, temaId)?.explicacion
+        val actual = com.eduracha.utils.TextoPlano.huella(explicacion)
+        val cambio = registro.visto && actual != null && registro.huella != null && registro.huella != actual
+        return mapOf(
+            "vista" to (registro.visto && !cambio),
+            "cambio" to cambio
+        )
+    }
+
+    suspend fun marcarExplicacionVista(userId: String, temaId: String, cursoId: String? = null) {
+        val huella = cursoId?.takeIf { it.isNotBlank() }?.let {
+            com.eduracha.utils.TextoPlano.huella(cursoRepo.obtenerTema(it, temaId)?.explicacion)
+        }
+        quizRepo.marcarExplicacionVista(userId, temaId, huella)
     }
 
     suspend fun obtenerRetroalimentacionFallos(
@@ -592,8 +621,8 @@ class QuizService(
             )
         }
 
-        val progreso = ServicioProgreso.obtenerProgreso(userId, cursoId)
-            ?: throw IllegalStateException("Progreso no encontrado")
+        val progreso = ServicioProgreso.obtenerOReconstruirProgreso(userId, cursoId)
+            ?: throw IllegalStateException("No estás inscrito en este curso")
 
         val vidasActuales = (progreso["vidas"] as? Number)?.toInt() ?: VIDAS_MAX
 

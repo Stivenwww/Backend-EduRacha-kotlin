@@ -150,6 +150,28 @@ fun Route.quizRoutes(
             }
         }
 
+        // GET /quiz/explicacion-vista/{cursoId}/{temaId} - ¿Ya leyó la versión actual de la explicación?
+        get("/explicacion-vista/{cursoId}/{temaId}") {
+            try {
+                val usuario = call.getUserFromToken()
+                    ?: return@get call.respond(
+                        HttpStatusCode.Unauthorized,
+                        mapOf("error" to "Token inválido o expirado")
+                    )
+                val cursoId = call.parameters["cursoId"]
+                    ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "cursoId es requerido"))
+                val temaId = call.parameters["temaId"]
+                    ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "temaId es requerido"))
+
+                call.respond(HttpStatusCode.OK, quizService.estadoExplicacion(usuario.uid, cursoId, temaId))
+            } catch (e: Exception) {
+                call.respond(
+                    HttpStatusCode.InternalServerError,
+                    mapOf("error" to "Error al consultar la explicación: ${e.message}")
+                )
+            }
+        }
+
         // POST /quiz/explicacion-vista - Marcar explicación como vista
         post("/explicacion-vista") {
             try {
@@ -166,7 +188,7 @@ fun Route.quizRoutes(
                         mapOf("error" to "temaId es requerido")
                     )
 
-                quizService.marcarExplicacionVista(usuario.uid, temaId)
+                quizService.marcarExplicacionVista(usuario.uid, temaId, request["cursoId"])
 
                 call.respond(
                     HttpStatusCode.OK,
@@ -177,6 +199,42 @@ fun Route.quizRoutes(
                 call.respond(
                     HttpStatusCode.InternalServerError,
                     mapOf("error" to "Error al marcar explicación: ${e.message}")
+                )
+            }
+        }
+
+        // GET /quiz/aprobados/{cursoId} - Temas aprobados (>= 80%) del usuario autenticado en un curso.
+        // Reemplaza la descarga de TODOS los quizzes desde la app (lento y exponía datos de otros estudiantes).
+        get("/aprobados/{cursoId}") {
+            try {
+                val usuario = call.getUserFromToken()
+                    ?: return@get call.respond(
+                        HttpStatusCode.Unauthorized,
+                        mapOf("error" to "Token inválido o expirado")
+                    )
+                val cursoId = call.parameters["cursoId"]
+                    ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Curso ID es requerido"))
+
+                val finalizados = quizRepo.obtenerQuizzesPorEstudiante(usuario.uid, cursoId)
+                    .filter { it.estado == "finalizado" }
+                fun aprobado(q: com.eduracha.models.Quiz): Boolean {
+                    val total = q.preguntasCorrectas + q.preguntasIncorrectas
+                    return total > 0 && (q.preguntasCorrectas * 100) / total >= 80
+                }
+                val temasAprobados = finalizados
+                    .filter { it.modo != "final" && it.temaId.isNotBlank() && aprobado(it) }
+                    .map { it.temaId }
+                    .distinct()
+                val quizFinalAprobado = finalizados.any { it.modo == "final" && aprobado(it) }
+
+                call.respond(
+                    HttpStatusCode.OK,
+                    TemasAprobadosResponse(temasAprobados = temasAprobados, quizFinalAprobado = quizFinalAprobado)
+                )
+            } catch (e: Exception) {
+                call.respond(
+                    HttpStatusCode.ServiceUnavailable,
+                    mapOf("error" to "No se pudo obtener el progreso: ${e.message}")
                 )
             }
         }
@@ -329,3 +387,9 @@ fun Route.quizRoutes(
         }
     }
 }
+
+@kotlinx.serialization.Serializable
+data class TemasAprobadosResponse(
+    val temasAprobados: List<String>,
+    val quizFinalAprobado: Boolean
+)

@@ -1,5 +1,8 @@
 package com.eduracha.services
 
+import com.eduracha.utils.lecturaFirebase
+import com.eduracha.utils.reanudarConError
+
 import com.eduracha.models.*
 import com.eduracha.repository.PreguntaRepository
 import com.eduracha.repository.CursoRepository
@@ -227,11 +230,12 @@ class ServicioSeleccionPreguntas(
     private suspend fun registrarUsoPregunta(
         preguntaId: String, 
         estudianteId: String
-    ) = suspendCancellableCoroutine<Unit> { cont ->
+    ) = lecturaFirebase<Unit> { cont ->
         val ref = db.getReference("preguntas/$preguntaId/usadaPorEstudiantes/$estudianteId")
         
         ref.addListenerForSingleValueEvent(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                 val vecesUsada = snapshot.getValue(Int::class.java) ?: 0
                 
                 ref.setValue(vecesUsada + 1, DatabaseReference.CompletionListener { error, _ ->
@@ -241,6 +245,9 @@ class ServicioSeleccionPreguntas(
                         cont.resume(Unit)
                     }
                 })
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "ServicioSeleccionPreguntas.kt")
+                }
             }
             
             override fun onCancelled(error: DatabaseError) {
@@ -254,15 +261,19 @@ class ServicioSeleccionPreguntas(
         cursoId: String,
         temaId: String,
         estudianteId: String
-    ): Set<String> = suspendCancellableCoroutine { cont ->
+    ): Set<String> = lecturaFirebase { cont ->
         val ref = db.getReference("usuarios/$estudianteId/perfil/cursos/$cursoId/temasCompletados/$temaId/preguntasVistas")
         
         ref.addListenerForSingleValueEvent(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                 val preguntas = snapshot.children.mapNotNull { 
                     it.getValue(String::class.java) 
                 }.toSet()
                 cont.resume(preguntas)
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "ServicioSeleccionPreguntas.kt")
+                }
             }
             
             override fun onCancelled(error: DatabaseError) {
@@ -277,11 +288,12 @@ class ServicioSeleccionPreguntas(
         temaId: String,
         estudianteId: String,
         preguntasIds: List<String>
-    ) = suspendCancellableCoroutine<Unit> { cont ->
+    ) = lecturaFirebase<Unit> { cont ->
         val ref = db.getReference("usuarios/$estudianteId/perfil/cursos/$cursoId/temasCompletados/$temaId")
         
         ref.child("preguntasVistas").addListenerForSingleValueEvent(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                 val actuales = snapshot.children.mapNotNull { 
                     it.getValue(String::class.java) 
                 }.toMutableSet()
@@ -295,6 +307,9 @@ class ServicioSeleccionPreguntas(
                         cont.resume(Unit)
                     }
                 })
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "ServicioSeleccionPreguntas.kt")
+                }
             }
             
             override fun onCancelled(error: DatabaseError) {

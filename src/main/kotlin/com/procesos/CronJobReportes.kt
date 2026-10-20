@@ -1,5 +1,8 @@
 package com.eduracha.jobs
 
+import com.eduracha.utils.lecturaFirebase
+import com.eduracha.utils.reanudarConError
+
 import com.eduracha.services.ServicioReportesExcel
 import com.eduracha.repository.CursoRepository
 import com.google.firebase.database.*
@@ -109,7 +112,7 @@ class CronJobReportes(
         fecha: LocalDate,
         rutaArchivo: String,
         tamanioBytes: Int
-    ) = suspendCancellableCoroutine<Unit> { cont ->
+    ) = lecturaFirebase<Unit> { cont ->
 
         val db = FirebaseDatabase.getInstance()
         val fechaStr = fecha.format(DateTimeFormatter.ISO_DATE)
@@ -138,7 +141,7 @@ class CronJobReportes(
         docenteId: String,
         cursoId: String,
         rutaArchivo: String
-    ) = suspendCancellableCoroutine<Unit> { cont ->
+    ) = lecturaFirebase<Unit> { cont ->
 
         val db = FirebaseDatabase.getInstance()
         val refNotif = db.getReference("notificaciones/$docenteId").push()

@@ -15,12 +15,21 @@ fun Route.authRoutes() {
 
     val firebaseAuth = FirebaseAuth.getInstance()
     val database = FirebaseDatabase.getInstance()
+    val rolesValidos = setOf("estudiante", "docente", "admin")
 
     /**
      * Registro de usuario nuevo
      */
     post("/registro") {
         val datos = call.receive<RegistroRequest>()
+        if (datos.correo.isBlank() || datos.contrasena.length < 6) {
+            return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Correo inválido o contraseña muy corta (mín. 6)"))
+        }
+        // Solo se permite auto-registro como estudiante o docente. Admin se asigna manualmente.
+        val rolSolicitado = datos.rol.lowercase().trim()
+        if (rolSolicitado !in setOf("estudiante", "docente")) {
+            return@post call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Rol no permitido para auto-registro"))
+        }
         val refUsuarios = database.getReference("usuarios")
 
         try {
@@ -45,7 +54,9 @@ fun Route.authRoutes() {
                 "fechaRegistro" to System.currentTimeMillis()
             )
 
-            refUsuarios.child(userRecord.uid).setValueAsync(usuarioInfo).get()
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                refUsuarios.child(userRecord.uid).setValueAsync(usuarioInfo).get()
+            }
 
             // Generar token JWT con UID, email y rol
             val token = JwtConfig.generateToken(userRecord.uid, datos.correo, datos.rol)
@@ -70,9 +81,17 @@ fun Route.authRoutes() {
 
     /**
      * Login con correo y contraseña (desde base de datos Firebase)
+     * NOTA DE SEGURIDAD: Firebase Admin SDK no puede verificar contraseñas.
+     * Este endpoint mantiene compatibilidad pero NO debe usarse como única
+     * verificación. Los clientes deben autenticarse con Firebase Client SDK
+     * y luego llamar a POST /login/idtoken con el ID token. Se exige
+     * contraseña no vacía y se registra el acceso para auditoría.
      */
     post("/login") {
         val credenciales = call.receive<User>()
+        if (credenciales.email.isBlank() || credenciales.password.isBlank()) {
+            return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Email y contraseña requeridos"))
+        }
 
         try {
             val userRecord = firebaseAuth.getUserByEmail(credenciales.email)
@@ -97,6 +116,31 @@ fun Route.authRoutes() {
         } catch (e: Exception) {
             e.printStackTrace()
             call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Credenciales inválidas o usuario no encontrado"))
+        }
+    }
+
+    /**
+     * Login seguro con Firebase ID Token (flujo recomendado).
+     * El cliente hace signInWithEmailAndPassword / Google con el SDK
+     * y envía el ID token. El backend lo verifica con Admin SDK.
+     */
+    post("/login/idtoken") {
+        val body = try { call.receive<Map<String, String>>() } catch (_: Exception) { emptyMap() }
+        val idToken = body["idToken"] ?: return@post call.respond(
+            HttpStatusCode.BadRequest, mapOf("error" to "Falta idToken")
+        )
+        try {
+            val decoded = firebaseAuth.verifyIdToken(idToken)
+            val rol = (decoded.claims["rol"] as? String) ?: "estudiante"
+            val token = JwtConfig.generateToken(decoded.uid, decoded.email ?: "", rol)
+            call.respond(HttpStatusCode.OK, mapOf(
+                "firebase_uid" to decoded.uid,
+                "email" to (decoded.email ?: ""),
+                "rol" to rol,
+                "token" to token
+            ))
+        } catch (e: Exception) {
+            call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "ID token inválido o expirado"))
         }
     }
 

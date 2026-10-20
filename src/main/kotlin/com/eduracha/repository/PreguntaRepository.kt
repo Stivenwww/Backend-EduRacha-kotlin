@@ -1,5 +1,8 @@
 package com.eduracha.repository
 
+import com.eduracha.utils.lecturaFirebase
+import com.eduracha.utils.reanudarConError
+
 import com.eduracha.models.Pregunta
 import com.google.firebase.database.*
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -13,9 +16,9 @@ class PreguntaRepository {
 
     // Crear una nueva pregunta
     suspend fun crearPregunta(pregunta: Pregunta): String =
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             val nuevoRef = ref.push()
-            val id = nuevoRef.key ?: return@suspendCancellableCoroutine cont.resumeWithException(
+            val id = nuevoRef.key ?: return@lecturaFirebase cont.resumeWithException(
                 Exception("No se pudo generar ID")
             )
 
@@ -33,12 +36,16 @@ class PreguntaRepository {
 
     // Obtener todas las preguntas
     suspend fun obtenerPreguntas(): List<Pregunta> =
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             ref.addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                     val lista = snapshot.children.mapNotNull { it.getValue(Pregunta::class.java) }
                     cont.resume(lista)
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "PreguntaRepository.kt")
                 }
+            }
 
                 override fun onCancelled(error: DatabaseError) {
                     cont.resumeWithException(error.toException())
@@ -48,20 +55,18 @@ class PreguntaRepository {
 
     // Obtener preguntas por curso y estado
     suspend fun obtenerPreguntasPorCursoYEstado(cursoId: String, estado: String?): List<Pregunta> =
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             ref.orderByChild("cursoId").equalTo(cursoId)
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                         val todas = snapshot.children.mapNotNull { it.getValue(Pregunta::class.java) }
 
-                        val filtradas = when {
-                            estado.isNullOrBlank() ||
-                            estado.equals("todos", ignoreCase = true) -> todas
-                            else -> todas.filter { it.estado.equals(estado, ignoreCase = true) }
-                        }
-
-                        cont.resume(filtradas)
-                    }
+                        cont.resume(filtrarPreguntasPorEstado(todas, estado))
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "PreguntaRepository.kt")
+                }
+            }
 
                     override fun onCancelled(error: DatabaseError) {
                         cont.resumeWithException(error.toException())
@@ -71,11 +76,15 @@ class PreguntaRepository {
 
     // Obtener una pregunta por ID
     suspend fun obtenerPreguntaPorId(id: String): Pregunta? =
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             ref.child(id).addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                     cont.resume(snapshot.getValue(Pregunta::class.java))
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "PreguntaRepository.kt")
                 }
+            }
 
                 override fun onCancelled(error: DatabaseError) {
                     cont.resumeWithException(error.toException())
@@ -85,7 +94,7 @@ class PreguntaRepository {
 
       // Actualizar toda la pregunta
     suspend fun actualizarPregunta(id: String, pregunta: Pregunta) =
-        suspendCancellableCoroutine<Unit> { cont ->
+        lecturaFirebase<Unit> { cont ->
             ref.child(id).setValue(pregunta.copy(id = id), DatabaseReference.CompletionListener { error, _ ->
                 if (error != null) cont.resumeWithException(Exception(error.message))
                 else cont.resume(Unit)
@@ -95,7 +104,7 @@ class PreguntaRepository {
 
     // Actualizar solo el estado de la pregunta
     suspend fun actualizarEstadoPregunta(id: String, nuevoEstado: String, notas: String? = null) =
-        suspendCancellableCoroutine<Unit> { cont ->
+        lecturaFirebase<Unit> { cont ->
             val updates = mutableMapOf<String, Any>("estado" to nuevoEstado)
             notas?.let { updates["notasRevision"] = it }
 
@@ -107,7 +116,7 @@ class PreguntaRepository {
 
     // Eliminar una pregunta
     suspend fun eliminarPregunta(id: String) =
-        suspendCancellableCoroutine<Unit> { cont ->
+        lecturaFirebase<Unit> { cont ->
             ref.child(id).removeValue(DatabaseReference.CompletionListener { error, _ ->
                 if (error != null) cont.resumeWithException(Exception(error.message))
                 else cont.resume(Unit)

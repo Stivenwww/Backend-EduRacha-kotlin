@@ -1,5 +1,8 @@
 package com.eduracha.utils
 
+import com.eduracha.utils.lecturaFirebase
+import com.eduracha.utils.reanudarConError
+
 import com.eduracha.models.Usuario
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.*
@@ -40,16 +43,20 @@ suspend fun ApplicationCall.getUserFromToken(): Usuario? {
 
     return try {
         val database = FirebaseDatabase.getInstance()
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             database.getReference("usuarios")
                 .orderByChild("correo")
                 .equalTo(tokenData.email)
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                         val usuarioSnapshot = snapshot.children.firstOrNull()
                         val usuario = usuarioSnapshot?.getValue(Usuario::class.java)
                         cont.resume(usuario)
-                    }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "AuthUtils.kt")
+                }
+            }
 
                     override fun onCancelled(error: DatabaseError) {
                         println("Error al obtener usuario: ${error.message}")
@@ -66,12 +73,16 @@ suspend fun ApplicationCall.getUserFromToken(): Usuario? {
 suspend fun ApplicationCall.getUserByUid(uid: String): Usuario? {
     return try {
         val database = FirebaseDatabase.getInstance()
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             database.getReference("usuarios/$uid")
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                         cont.resume(snapshot.getValue(Usuario::class.java))
-                    }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "AuthUtils.kt")
+                }
+            }
 
                     override fun onCancelled(error: DatabaseError) {
                         println("Error al obtener usuario por UID: ${error.message}")
