@@ -1,5 +1,6 @@
 package com.eduracha.routes
 
+import com.eduracha.utils.exigirRol
 import com.eduracha.models.Pregunta
 import com.eduracha.repository.PreguntaRepository
 import com.eduracha.repository.ExplicacionRepository
@@ -21,7 +22,7 @@ data class PreguntasIAResponse(
     val preguntas: List<Pregunta>
 )
 
-fun Application.preguntasRoutes() {
+fun Application.preguntasRoutes(aiService: com.eduracha.ai.AiService? = null) {
     val repo = PreguntaRepository()
     val explicacionRepo = ExplicacionRepository()
 
@@ -31,13 +32,18 @@ fun Application.preguntasRoutes() {
         route("/api/preguntas") {
 
             // GET /api/preguntas?cursoId=...&estado=...
+            // Contrato: `estado` filtra siempre (con o sin cursoId).
+            // `estado=todos` o ausente = sin filtro.
             get {
+                call.exigirRol("docente", "admin") ?: return@get
                 val cursoId = call.request.queryParameters["cursoId"]
-                val estado = call.request.queryParameters["estado"]
+                val estado = call.request.queryParameters["estado"]?.trim()?.takeIf { it.isNotEmpty() }
 
                 try {
                     val preguntas = if (!cursoId.isNullOrEmpty()) {
                         repo.obtenerPreguntasPorCursoYEstado(cursoId, estado)
+                    } else if (estado != null && !estado.equals("todos", ignoreCase = true)) {
+                        com.eduracha.repository.filtrarPreguntasPorEstado(repo.obtenerPreguntas(), estado)
                     } else {
                         repo.obtenerPreguntas()
                     }
@@ -53,6 +59,7 @@ fun Application.preguntasRoutes() {
 
             // GET /api/preguntas/{id}
             get("/{id}") {
+                call.exigirRol("docente", "admin") ?: return@get
                 val id = call.parameters["id"] ?: return@get call.respond(HttpStatusCode.BadRequest)
                 try {
                     val pregunta = repo.obtenerPreguntaPorId(id)
@@ -65,6 +72,7 @@ fun Application.preguntasRoutes() {
 
             // POST /api/preguntas
             post {
+                call.exigirRol("docente", "admin") ?: return@post
                 try {
                     val pregunta = call.receive<Pregunta>()
                     
@@ -101,6 +109,7 @@ fun Application.preguntasRoutes() {
 
             // PUT /api/preguntas/{id}
             put("/{id}") {
+                call.exigirRol("docente", "admin") ?: return@put
                 val id = call.parameters["id"] ?: return@put call.respond(HttpStatusCode.BadRequest)
                 try {
                     val pregunta = call.receive<Pregunta>()
@@ -113,6 +122,7 @@ fun Application.preguntasRoutes() {
 
             // DELETE /api/preguntas/{id}
             delete("/{id}") {
+                call.exigirRol("docente", "admin") ?: return@delete
                 val id = call.parameters["id"] ?: return@delete call.respond(HttpStatusCode.BadRequest)
                 try {
                     repo.eliminarPregunta(id)
@@ -124,6 +134,7 @@ fun Application.preguntasRoutes() {
 
             // PUT /api/preguntas/{id}/estado
             put("/{id}/estado") {
+                call.exigirRol("docente", "admin") ?: return@put
                 val id = call.parameters["id"] ?: return@put call.respond(HttpStatusCode.BadRequest)
                 try {
                     val data = call.receive<Map<String, String>>()
@@ -138,30 +149,30 @@ fun Application.preguntasRoutes() {
 
             // DELETE /api/preguntas/cache
             delete("/cache") {
+                call.exigirRol("docente", "admin") ?: return@delete
                 repo.limpiarCacheFirebase()
                 call.respond(mapOf("message" to "Caché de Firebase limpiada"))
             }
         }
 
-        // RUTAS DE IA (Generación Automática)
+        // RUTAS DE IA (Generación Automática) — usa AiService desacoplado si existe
         route("/api/preguntas/ia") {
-            val dotenv = dotenv()
-            val openAiKey = dotenv["OPENAI_API_KEY"] ?: error("Falta la API Key de OpenAI")
-            val client = HttpClient(CIO)
-            val iaService = OpenAIService(client, openAiKey)
-
             // POST /api/preguntas/ia/generar
             post("/generar") {
+                call.exigirRol("docente", "admin") ?: return@post
                 try {
                     val data = call.receive<Map<String, String>>()
                     val cursoId = data["cursoId"] ?: return@post call.respond(HttpStatusCode.BadRequest, "Falta cursoId")
                     val temaId = data["temaId"] ?: return@post call.respond(HttpStatusCode.BadRequest, "Falta temaId")
                     val temaTexto = data["temaTexto"] ?: return@post call.respond(HttpStatusCode.BadRequest, "Falta temaTexto")
-                    val cantidad = data["cantidad"]?.toIntOrNull() ?: 5
+                    val cantidad = (data["cantidad"]?.toIntOrNull() ?: 5).coerceIn(1, 20)
+                    if (temaTexto.length > 4000) {
+                        return@post call.respond(HttpStatusCode.BadRequest, "temaTexto demasiado largo (máx. 4000)")
+                    }
 
                     // VALIDACIÓN CRÍTICA: Verificar que existe explicación aprobada
                     val tieneExplicacion = explicacionRepo.tieneExplicacionAprobada(cursoId, temaId)
-                    
+
                     if (!tieneExplicacion) {
                         return@post call.respond(
                             HttpStatusCode.PreconditionFailed,
@@ -173,7 +184,20 @@ fun Application.preguntasRoutes() {
                         )
                     }
 
-                    val preguntas = iaService.generarYGuardarPreguntas(cursoId, temaId, temaTexto, cantidad)
+                    val preguntas = if (aiService != null) {
+                        aiService.generarYGuardarPreguntas(cursoId, temaId, temaTexto, cantidad)
+                    } else {
+                        // Fallback legacy OpenAI directo (compatibilidad)
+                        val openAiKey = System.getenv("OPENAI_API_KEY")
+                            ?: dotenv()["OPENAI_API_KEY"]
+                            ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "IA no configurada (AI_API_KEY/AI_PROVIDER)"))
+                        val client = HttpClient(CIO)
+                        try {
+                            OpenAIService(client, openAiKey).generarYGuardarPreguntas(cursoId, temaId, temaTexto, cantidad)
+                        } finally {
+                            client.close()
+                        }
+                    }
 
                     call.respond(
                         HttpStatusCode.OK,

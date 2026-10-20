@@ -1,5 +1,8 @@
 package com.eduracha.services
 
+import com.eduracha.utils.lecturaFirebase
+import com.eduracha.utils.reanudarConError
+
 import com.google.firebase.database.*
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -49,19 +52,80 @@ object ServicioProgreso {
     }
 
     suspend fun obtenerProgreso(usuarioId: String, cursoId: String): Map<String, Any>? =
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             val ref = db.getReference("usuarios/$usuarioId/cursos/$cursoId/progreso")
             ref.addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                     val data = snapshot.value as? Map<String, Any>
                     cont.resume(data)
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "ServicioProgreso.kt")
                 }
+            }
 
                 override fun onCancelled(error: DatabaseError) {
                     cont.resumeWithException(error.toException())
                 }
             })
         }
+
+    /**
+     * Igual que [obtenerProgreso], pero si el estudiante figura en cursos/{cursoId}/estudiantes
+     * y le falta el nodo de progreso (inscripciones antiguas o incompletas), lo crea y lo devuelve.
+     * Devuelve null solo si de verdad no está inscrito.
+     */
+    suspend fun obtenerOReconstruirProgreso(usuarioId: String, cursoId: String): Map<String, Any>? {
+        obtenerProgreso(usuarioId, cursoId)?.let { return it }
+
+        val estudiante: Map<String, Any?>? = lecturaFirebase { cont ->
+            db.getReference("cursos/$cursoId/estudiantes/$usuarioId")
+                .addListenerForSingleValueEvent(object : ValueEventListener {
+                    override fun onDataChange(snapshot: DataSnapshot) {
+                        @Suppress("UNCHECKED_CAST")
+                        cont.resume(if (snapshot.exists()) (snapshot.value as? Map<String, Any?> ?: emptyMap()) else null)
+                    }
+                    override fun onCancelled(error: DatabaseError) {
+                        cont.resumeWithException(error.toException())
+                    }
+                })
+        }
+        if (estudiante == null) {
+            println("Progreso: $usuarioId no figura en cursos/$cursoId/estudiantes")
+            return null
+        }
+        if ((estudiante["estado"] as? String)?.lowercase() in setOf("eliminado", "inactivo", "bloqueado")) {
+            return null
+        }
+
+        val ahora = System.currentTimeMillis()
+        val progresoInicial: Map<String, Any> = mapOf(
+            "estudianteId" to usuarioId,
+            "cursoId" to cursoId,
+            "nombre" to (estudiante["nombre"] as? String ?: ""),
+            "email" to (estudiante["email"] as? String ?: ""),
+            "quizzesCompletados" to 0,
+            "practicasCompletadas" to 0,
+            "porcentaje" to 0,
+            "temasCompletados" to 0,
+            "experiencia" to 0,
+            "vidas" to 5,
+            "vidasMax" to 5,
+            "diasConsecutivos" to 0,
+            "mejorRacha" to 0,
+            "ultimaFecha" to 0L,
+            "ultimaActividad" to ahora,
+            "ultimaRegen" to ahora
+        )
+        lecturaFirebase<Unit> { cont ->
+            db.getReference("usuarios/$usuarioId/cursos/$cursoId/progreso")
+                .setValue(progresoInicial) { error, _ ->
+                    if (error != null) cont.resumeWithException(error.toException()) else cont.resume(Unit)
+                }
+        }
+        println("Progreso reconstruido para $usuarioId en curso $cursoId (estaba inscrito sin progreso)")
+        return progresoInicial
+    }
 
     // Actualizar progreso tras completar un quiz
     suspend fun actualizarProgresoQuiz(
@@ -72,11 +136,12 @@ object ServicioProgreso {
         aprobado: Boolean,
         actualizarRacha: Boolean = true,
         esPractica: Boolean = false 
-    ) = suspendCancellableCoroutine { cont ->
+    ) = lecturaFirebase { cont ->
         val ref = db.getReference("usuarios/$usuarioId/cursos/$cursoId/progreso")
         
         ref.addListenerForSingleValueEvent(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                 val actual = snapshot.value as? Map<String, Any> ?: mapOf()
                 
                 val xpActual = (actual["experiencia"] as? Number)?.toInt() ?: 0
@@ -176,6 +241,9 @@ object ServicioProgreso {
                         cont.resume(Unit)
                     }
                 }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "ServicioProgreso.kt")
+                }
             }
 
             override fun onCancelled(error: DatabaseError) {
@@ -189,13 +257,14 @@ object ServicioProgreso {
         usuarioId: String,
         cursoId: String,
         totalTemas: Int
-    ) = suspendCancellableCoroutine<Unit> { cont ->
+    ) = lecturaFirebase<Unit> { cont ->
         val refProgreso = db.getReference("usuarios/$usuarioId/cursos/$cursoId/progreso")
         val refTemas = db.getReference("usuarios/$usuarioId/cursos/$cursoId/temasCompletados")
         
         // Contar temas aprobados
         refTemas.addListenerForSingleValueEvent(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                 var temasAprobados = 0
                 
                 snapshot.children.forEach { temaSnap ->
@@ -221,6 +290,9 @@ object ServicioProgreso {
                         cont.resume(Unit)
                     }
                 }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "ServicioProgreso.kt")
+                }
             }
             
             override fun onCancelled(error: DatabaseError) {
@@ -234,11 +306,12 @@ object ServicioProgreso {
         usuarioId: String,
         cursoId: String,
         vidaRegenMinutos: Int = 30
-    ) = suspendCancellableCoroutine { cont ->
+    ) = lecturaFirebase { cont ->
         val ref = db.getReference("usuarios/$usuarioId/cursos/$cursoId/progreso")
         
         ref.addListenerForSingleValueEvent(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                 val actual = snapshot.value as? Map<String, Any> ?: mapOf()
                 
                 val vidasActuales = (actual["vidas"] as? Number)?.toInt() ?: 5
@@ -267,6 +340,9 @@ object ServicioProgreso {
                 } else {
                     cont.resume(Unit)
                 }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "ServicioProgreso.kt")
+                }
             }
 
             override fun onCancelled(error: DatabaseError) {
@@ -283,7 +359,7 @@ object ServicioProgreso {
         usuarioId: String,
         cursoId: String,
         nuevasVidas: Int
-    ) = suspendCancellableCoroutine<Unit> { cont ->
+    ) = lecturaFirebase<Unit> { cont ->
         val ref = db.getReference("usuarios/$usuarioId/cursos/$cursoId/progreso")
         
         val vidasCoerced = nuevasVidas.coerceIn(0, 5)

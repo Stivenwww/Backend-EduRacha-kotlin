@@ -1,5 +1,8 @@
 package com.eduracha.services
 
+import com.eduracha.utils.lecturaFirebase
+import com.eduracha.utils.reanudarConError
+
 import com.eduracha.repository.CursoRepository
 import com.eduracha.repository.QuizRepository
 import com.eduracha.routes.*
@@ -108,10 +111,10 @@ class ServicioReportesExcel(
     private suspend fun obtenerQuizzesSimplificados(
         estudianteId: String,
         cursoId: String
-    ): List<DatosQuizSimple> = suspendCancellableCoroutine { cont ->
+    ): List<DatosQuizSimple> = lecturaFirebase { cont ->
         
         println(" [ServicioReportes] Obteniendo quizzes simplificados:")
-        println("   📌 Estudiante: $estudianteId")
+        println("    Estudiante: $estudianteId")
         println("    Curso: $cursoId")
         
         val database = FirebaseDatabase.getInstance()
@@ -120,6 +123,7 @@ class ServicioReportesExcel(
         refQuizzes.orderByChild("estudianteId").equalTo(estudianteId)
             .addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                     val quizzes = mutableListOf<DatosQuizSimple>()
                     
                     println("    Total quizzes del estudiante: ${snapshot.childrenCount}")
@@ -183,7 +187,10 @@ class ServicioReportesExcel(
                     }
                     println("    Total quizzes retornados: ${quizzes.size}")
                     cont.resume(quizzes)
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "ServicioReportesExcel.kt")
                 }
+            }
                 
                 override fun onCancelled(error: DatabaseError) {
                     println("   Error Firebase: ${error.message}")
@@ -201,7 +208,7 @@ class ServicioReportesExcel(
         val curso = cursoRepo.obtenerCursoPorId(cursoId) ?: throw IllegalStateException("Curso no encontrado")
         val estudiantes = cursoRepo.obtenerEstudiantesPorCurso(cursoId)
         
-        println("👥 Total estudiantes en curso: ${estudiantes.size}")
+        println("Total estudiantes en curso: ${estudiantes.size}")
         
         val datosEstudiantes = mutableListOf<EstudianteReporteData>()
 
@@ -453,7 +460,7 @@ class ServicioReportesExcel(
         return Pair(out.toByteArray(), "reporte_diario_${curso.titulo.replace(" ", "_")}_${fecha}.xlsx")
     }
 
-    private suspend fun guardarResumenDiarioUsuario(uid: String, fecha: LocalDate, resumen: Map<String, Any>) = suspendCancellableCoroutine<Unit> { cont ->
+    private suspend fun guardarResumenDiarioUsuario(uid: String, fecha: LocalDate, resumen: Map<String, Any>) = lecturaFirebase<Unit> { cont ->
         try {
             val fechaStr = fecha.format(DateTimeFormatter.ISO_DATE)
             val ref = FirebaseDatabase.getInstance().getReference("usuarios").child(uid).child("actividad_diaria").child(fechaStr)

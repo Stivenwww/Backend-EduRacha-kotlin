@@ -173,3 +173,24 @@ data class QuizFinalDisponibleResponse(
     val totalTemas: Int,
     val mensaje: String
 )
+
+   
+
+
+@Serializable
+data class ProcesarRespuestaRequest(
+    val quizId: String,
+    val preguntaId: String,
+    val respuestaSeleccionada: Int,
+    val tiempoSeg: Int
+)
+
+@Serializable
+data class ProcesarRespuestaResponse(
+    val esCorrecta: Boolean,
+    val vidasRestantes: Int,
+    val quizActivo: Boolean, // false si se quedó sin vidas
+    val mensaje: String? = null, // mensaje de error si quiz fue abandonado
+    val preguntasRespondidas: Int, // total respondidas hasta ahora
+    val preguntasCorrectas: Int // correctas hasta ahora
+)

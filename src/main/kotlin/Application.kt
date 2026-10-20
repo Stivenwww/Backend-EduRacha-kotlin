@@ -17,69 +17,60 @@ import com.eduracha.jobs.CronJobReportes
 import com.eduracha.utils.getUserFromToken
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
-import com.eduracha.models.EstadoTema
 import io.ktor.server.auth.*
 import io.ktor.server.auth.jwt.*
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
-import java.io.File
+import com.eduracha.utils.JwtConfig
+import io.ktor.server.plugins.cors.routing.*
+import com.google.auth.oauth2.GoogleCredentials
+import java.util.Base64
 
 fun main() {
-    embeddedServer(Netty, port = 8080, module = Application::module)
-        .start(wait = true)
+    embeddedServer(
+        Netty,
+        port = System.getenv("PORT")?.toInt() ?: 8080,
+        module = Application::module
+    ).start(wait = true)
 }
 
 fun Application.module() {
-    // Intenta cargar .env si existe (desarrollo local)
-    val dotenv = try {
-        dotenv {
-            ignoreIfMissing = true
-        }
-    } catch (e: Exception) {
-        null
-    }
 
-    // Función helper: primero System.getenv, luego dotenv
-    fun getEnv(key: String): String? {
-        return System.getenv(key) ?: dotenv?.get(key)
-    }
+    // Cargar dotenv solo en desarrollo
+   /*  val dotenv = try {
+        dotenv { ignoreIfMissing = true }
+    } catch (e: Exception) {
+        
+    }*/
+    //fun getEnv(key: String): String? =
+        //System.getenv(key)
+
+        val dotenv = try {
+            dotenv { ignoreIfMissing = true }
+        } catch (e: Exception) {
+            null
+        }
+
+        fun getEnv(key: String): String =
+    System.getenv(key)
+        ?: dotenv?.get(key)
+        ?: throw IllegalStateException("Variable $key no encontrada")
+
 
     val firebaseUrl = getEnv("FIREBASE_DATABASE_URL")
-    val openAiKey = getEnv("OPENAI_API_KEY")
-    val credentialsJson = getEnv("FIREBASE_CREDENTIALS_JSON")
-    val credentialsPath = getEnv("GOOGLE_APPLICATION_CREDENTIALS")
+        ?: throw IllegalStateException("FIREBASE_DATABASE_URL no encontrada")
 
-    println("Variables de entorno cargadas correctamente")
+    val base64 = try {
+        getEnv("FIREBASE_CREDENTIALS_BASE64")
+    } catch (_: Exception) { null }
+
+    // Decodificar credenciales Firebase (tolera base64 std/url-safe, JSON crudo o ruta)
+    val googleCredentials = com.eduracha.utils.FirebaseCredenciales.cargar(base64)
     println("Firebase URL: $firebaseUrl")
-    println("OpenAI Key (parcial): ${openAiKey?.take(8)}...")
+    println("Credenciales Firebase cargadas correctamente")
 
-    if (firebaseUrl.isNullOrEmpty()) {
-        throw IllegalStateException("No se encontró FIREBASE_DATABASE_URL")
-    }
-
-    // Determinar qué método usar para las credenciales
-    val finalCredentialsPath = when {
-        // Si existe FIREBASE_CREDENTIALS_JSON (producción), crear archivo temporal
-        !credentialsJson.isNullOrEmpty() -> {
-            println("Usando FIREBASE_CREDENTIALS_JSON desde variable de entorno")
-            val tempFile = File.createTempFile("firebase-credentials", ".json")
-            tempFile.deleteOnExit()
-            tempFile.writeText(credentialsJson)
-            tempFile.absolutePath
-        }
-        // Si existe GOOGLE_APPLICATION_CREDENTIALS (desarrollo local)
-        !credentialsPath.isNullOrEmpty() -> {
-            println("Usando GOOGLE_APPLICATION_CREDENTIALS: $credentialsPath")
-            credentialsPath
-        }
-        else -> {
-            throw IllegalStateException(
-                "No se encontró FIREBASE_CREDENTIALS_JSON ni GOOGLE_APPLICATION_CREDENTIALS"
-            )
-        }
-    }
-
-    FirebaseInit.initialize(finalCredentialsPath, firebaseUrl)
+    // Inicializar Firebase
+    FirebaseInit.initialize(googleCredentials, firebaseUrl)
 
     // Repositorios
     val preguntaRepo = PreguntaRepository()
@@ -88,11 +79,7 @@ fun Application.module() {
     val solicitudPreguntasRepo = SolicitudPreguntasRepository()
 
     // Servicios
-    val servicioSeleccion = ServicioSeleccionPreguntas(
-        preguntaRepo = preguntaRepo,
-        cursoRepo = cursoRepo
-    )
-
+    val servicioSeleccion = ServicioSeleccionPreguntas(preguntaRepo, cursoRepo)
     val quizService = QuizService(
         quizRepo = quizRepo,
         preguntaRepo = preguntaRepo,
@@ -103,21 +90,47 @@ fun Application.module() {
 
     val servicioReportes = ServicioReportesExcel(quizRepo, cursoRepo)
 
-    install(ContentNegotiation) {
-        json()
+    // IA desacoplada: selección por AI_PROVIDER. No rompe si falta clave (opera degradada).
+    val aiConfig = try { com.eduracha.ai.AiConfig.desdeEntorno { System.getenv(it) ?: dotenv?.get(it) } }
+        catch (_: Exception) { null }
+    var errorInicioIA: String? = null
+    val aiService: com.eduracha.ai.AiService? = try {
+        if (aiConfig != null) { com.eduracha.ai.AiConfig.validar(aiConfig); com.eduracha.ai.AiService(com.eduracha.ai.AiProviderFactory.crear(aiConfig)) }
+        else null
+    } catch (e: Exception) {
+        errorInicioIA = e.message
+        println("IA no disponible: ${e.message}")
+        null
+    }
+    if (aiService != null) println("Proveedor IA activo: ${aiService.proveedorActual} | modelo: ${aiConfig?.model} | llave: ...${aiConfig?.apiKey?.takeLast(4)}")
+    else println("ADVERTENCIA: IA no configurada. Configure AI_PROVIDER/AI_MODEL/AI_API_KEY.")
+    println("Diagnóstico de IA: abre http://localhost:8080/api/ia/diagnostico en el navegador de esta PC")
+
+    install(ContentNegotiation) { json() }
+
+    if (JwtConfig.isDefaultSecret) {
+        println("ADVERTENCIA: usando JWT_SECRET por defecto. Configure JWT_SECRET en producción.")
     }
 
-    // JWT dummy solo para pruebas
+    install(CORS) {
+        allowMethod(io.ktor.http.HttpMethod.Get)
+        allowMethod(io.ktor.http.HttpMethod.Post)
+        allowMethod(io.ktor.http.HttpMethod.Put)
+        allowMethod(io.ktor.http.HttpMethod.Delete)
+        allowHeader(io.ktor.http.HttpHeaders.Authorization)
+        allowHeader(io.ktor.http.HttpHeaders.ContentType)
+        // Ajuste a dominios reales en producción
+        anyHost()
+        allowNonSimpleContentTypes = true
+    }
+
+    // JWT dummy
     install(Authentication) {
         jwt("auth-jwt") {
-            verifier {
-                JWT
-                    .require(Algorithm.HMAC256("dummy-secret"))
-                    .build()
-            }
-            validate { credential ->
-                JWTPrincipal(credential.payload)
-            }
+            verifier(
+                JWT.require(Algorithm.HMAC256(JwtConfig.jwtSecret())).withIssuer("eduracha-server").build()
+            )
+            validate { JWTPrincipal(it.payload) }
             challenge { _, _ ->
                 call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token inválido"))
             }
@@ -125,16 +138,16 @@ fun Application.module() {
     }
 
     routing {
-        get("/") {
-            call.respondText("Servidor EduRacha corriendo correctamente")
-        }
+        get("/") { call.respondText("Servidor EduRacha corriendo correctamente") }
 
         authRoutes()
         usuarioRoutes()
+        preferenciasRoutes()
+        iaDiagnosticoRoutes(aiConfig, aiService, errorInicioIA)
         cursoRoutes()
         solicitudCursoRoutes()
-        chatRoutes()
-        preguntasRoutes()
+        chatRoutes(aiService)
+        preguntasRoutes(aiService)
         quizRoutes(quizService, quizRepo, cursoRepo)
         reportesRoutes(servicioReportes)
     }
@@ -148,7 +161,6 @@ fun Application.configureCronJobs(
     quizRepo: QuizRepository
 ) {
     val cronJob = CronJobReportes(servicioReportes, cursoRepo)
-
     cronJob.iniciar()
 
     environment.monitor.subscribe(ApplicationStopped) {
@@ -163,15 +175,14 @@ fun Application.configureCronJobs(
                     mapOf("error" to "Token inválido o expirado")
                 )
 
-            if (user.rol != "admin" && user.rol != "docente") {
-                call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Acceso denegado"))
-                return@post
+            if (user.rol !in listOf("admin", "docente")) {
+                return@post call.respond(
+                    HttpStatusCode.Forbidden,
+                    mapOf("error" to "Acceso denegado")
+                )
             }
 
-            GlobalScope.launch {
-                cronJob.ejecutarManualmente()
-            }
-
+            GlobalScope.launch { cronJob.ejecutarManualmente() }
             call.respond(HttpStatusCode.OK, mapOf("message" to "Generación de reportes iniciada"))
         }
     }

@@ -1,5 +1,8 @@
 package com.eduracha.repository
 
+import com.eduracha.utils.lecturaFirebase
+import com.eduracha.utils.reanudarConError
+
 import com.eduracha.models.SolicitudMasPreguntas
 import com.google.firebase.database.*
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -16,9 +19,9 @@ class SolicitudPreguntasRepository {
      //Crear solicitud de más preguntas
      
     suspend fun crearSolicitud(solicitud: SolicitudMasPreguntas): String = 
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             val nuevoRef = ref.push()
-            val id = nuevoRef.key ?: return@suspendCancellableCoroutine cont.resumeWithException(
+            val id = nuevoRef.key ?: return@lecturaFirebase cont.resumeWithException(
                 Exception("No se pudo generar ID de solicitud")
             )
             
@@ -43,10 +46,11 @@ class SolicitudPreguntasRepository {
         cursoId: String,
         temaId: String,
         estudianteId: String
-    ): Boolean = suspendCancellableCoroutine { cont ->
+    ): Boolean = lecturaFirebase { cont ->
         ref.orderByChild("cursoId").equalTo(cursoId)
             .addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                     val existe = snapshot.children.any { child ->
                         val solicitud = child.getValue(SolicitudMasPreguntas::class.java)
                         solicitud?.temaId == temaId &&
@@ -54,7 +58,10 @@ class SolicitudPreguntasRepository {
                         solicitud.estado == "pendiente"
                     }
                     cont.resume(existe)
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "SolicitudPreguntasRepository.kt")
                 }
+            }
                 
                 override fun onCancelled(error: DatabaseError) {
                     cont.resumeWithException(error.toException())
@@ -68,10 +75,11 @@ class SolicitudPreguntasRepository {
     suspend fun contarSolicitudesPorTema(
         cursoId: String,
         temaId: String
-    ): Int = suspendCancellableCoroutine { cont ->
+    ): Int = lecturaFirebase { cont ->
         ref.orderByChild("cursoId").equalTo(cursoId)
             .addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                     val estudiantesUnicos = snapshot.children
                         .mapNotNull { child -> 
                             child.getValue(SolicitudMasPreguntas::class.java)
@@ -82,7 +90,10 @@ class SolicitudPreguntasRepository {
                         .size
                     
                     cont.resume(estudiantesUnicos)
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "SolicitudPreguntasRepository.kt")
                 }
+            }
                 
                 override fun onCancelled(error: DatabaseError) {
                     cont.resumeWithException(error.toException())
@@ -92,11 +103,12 @@ class SolicitudPreguntasRepository {
     
      // Obtener solicitudes pendientes por docente
     suspend fun obtenerSolicitudesPorDocente(docenteId: String): List<SolicitudMasPreguntas> =
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             // Primero obtener cursos del docente
             refCursos.orderByChild("docenteId").equalTo(docenteId)
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(cursosSnapshot: DataSnapshot) {
+                try {
                         val cursosIds = cursosSnapshot.children.mapNotNull { it.key }
                         
                         if (cursosIds.isEmpty()) {
@@ -120,7 +132,10 @@ class SolicitudPreguntasRepository {
                                     cont.resumeWithException(error.toException())
                                 }
                             })
-                    }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "SolicitudPreguntasRepository.kt")
+                }
+            }
                     
                     override fun onCancelled(error: DatabaseError) {
                         cont.resumeWithException(error.toException())
@@ -131,10 +146,11 @@ class SolicitudPreguntasRepository {
      // Obtener solicitudes agrupadas por tema (para mostrar resumen al docente)
     suspend fun obtenerResumenSolicitudesPorDocente(
         docenteId: String
-    ): List<ResumenSolicitudesTema> = suspendCancellableCoroutine { cont ->
+    ): List<ResumenSolicitudesTema> = lecturaFirebase { cont ->
         refCursos.orderByChild("docenteId").equalTo(docenteId)
             .addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(cursosSnapshot: DataSnapshot) {
+                try {
                     val cursosIds = cursosSnapshot.children.mapNotNull { it.key }
                     
                     if (cursosIds.isEmpty()) {
@@ -172,7 +188,10 @@ class SolicitudPreguntasRepository {
                                 cont.resumeWithException(error.toException())
                             }
                         })
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "SolicitudPreguntasRepository.kt")
                 }
+            }
                 
                 override fun onCancelled(error: DatabaseError) {
                     cont.resumeWithException(error.toException())
@@ -184,7 +203,7 @@ class SolicitudPreguntasRepository {
      * Marcar solicitud como atendida
      */
     suspend fun marcarAtendida(solicitudId: String) = 
-        suspendCancellableCoroutine<Unit> { cont ->
+        lecturaFirebase<Unit> { cont ->
             val updates = mapOf(
                 "estado" to "atendida",
                 "fechaAtencion" to System.currentTimeMillis()
@@ -206,10 +225,11 @@ class SolicitudPreguntasRepository {
     suspend fun marcarAtendidasPorTema(
         cursoId: String,
         temaId: String
-    ) = suspendCancellableCoroutine<Unit> { cont ->
+    ) = lecturaFirebase<Unit> { cont ->
         ref.orderByChild("cursoId").equalTo(cursoId)
             .addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                     val solicitudesDelTema = snapshot.children
                         .mapNotNull { child ->
                             val solicitud = child.getValue(SolicitudMasPreguntas::class.java)
@@ -236,7 +256,10 @@ class SolicitudPreguntasRepository {
                             cont.resume(Unit)
                         }
                     })
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "SolicitudPreguntasRepository.kt")
                 }
+            }
                 
                 override fun onCancelled(error: DatabaseError) {
                     cont.resumeWithException(error.toException())
@@ -246,12 +269,16 @@ class SolicitudPreguntasRepository {
     
      //Obtener una solicitud por ID
     suspend fun obtenerSolicitudPorId(solicitudId: String): SolicitudMasPreguntas? = 
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             ref.child(solicitudId)
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                         cont.resume(snapshot.getValue(SolicitudMasPreguntas::class.java))
-                    }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "SolicitudPreguntasRepository.kt")
+                }
+            }
                     
                     override fun onCancelled(error: DatabaseError) {
                         cont.resumeWithException(error.toException())
@@ -261,12 +288,13 @@ class SolicitudPreguntasRepository {
     
      // Eliminar solicitudes antiguas ya atendidas (limpieza de base de datos)
     suspend fun limpiarSolicitudesAntiguas(diasAntiguedad: Int = 30) = 
-        suspendCancellableCoroutine<Unit> { cont ->
+        lecturaFirebase<Unit> { cont ->
             val fechaLimite = System.currentTimeMillis() - (diasAntiguedad * 24 * 60 * 60 * 1000L)
             
             ref.orderByChild("estado").equalTo("atendida")
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
+                try {
                         val antiguasIds = snapshot.children
                             .mapNotNull { child ->
                                 val solicitud = child.getValue(SolicitudMasPreguntas::class.java)
@@ -292,7 +320,10 @@ class SolicitudPreguntasRepository {
                                 cont.resume(Unit)
                             }
                         })
-                    }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "SolicitudPreguntasRepository.kt")
+                }
+            }
                     
                     override fun onCancelled(error: DatabaseError) {
                         cont.resumeWithException(error.toException())

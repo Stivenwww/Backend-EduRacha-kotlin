@@ -62,6 +62,11 @@ fun Route.usuarioRoutes() {
             return@put call.respond(HttpStatusCode.BadRequest, "Cuerpo inválido: ${e.message}")
         }
 
+        // Seguridad: el rol NO se puede cambiar desde la propia cuenta (evita escalar a docente/admin).
+        if (body.rol != null) {
+            return@put call.respond(HttpStatusCode.Forbidden, "El rol no se puede modificar desde este endpoint")
+        }
+
         try {
             val usuarioActual = firebaseAuth.getUserByEmail(email)
             val uid = usuarioActual.uid
@@ -144,7 +149,7 @@ fun Route.usuarioRoutes() {
         }
     }
 
-    // Eliminar un usuario por UID (solo 'docente' o 'admin')
+    // Eliminar un usuario por UID (solo 'admin')
     delete("/usuario/{uid}") {
         val emailSolicitante = obtenerEmailDesdeJWT(call)
         if (emailSolicitante == null) {
@@ -160,8 +165,12 @@ fun Route.usuarioRoutes() {
             val solicitante = firebaseAuth.getUserByEmail(emailSolicitante)
             val rolSolicitante = solicitante.customClaims?.get("rol") as? String
 
-            if (rolSolicitante != "docente" && rolSolicitante != "admin") {
-                return@delete call.respond(HttpStatusCode.Forbidden, "Acceso denegado: se requiere rol docente o admin")
+            // Seguridad: eliminar cuentas es una acción irreversible; solo administradores.
+            if (rolSolicitante != "admin") {
+                return@delete call.respond(HttpStatusCode.Forbidden, "Acceso denegado: se requiere rol admin")
+            }
+            if (solicitante.uid == uidAEliminar) {
+                return@delete call.respond(HttpStatusCode.BadRequest, "No puedes eliminar tu propia cuenta desde aquí")
             }
 
             firebaseAuth.deleteUser(uidAEliminar)

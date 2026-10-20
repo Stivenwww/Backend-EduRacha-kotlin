@@ -1,5 +1,8 @@
 package com.eduracha.routes
 
+import com.eduracha.utils.esDuenoOPrivilegiado
+import com.eduracha.utils.exigirUsuario
+import com.eduracha.utils.exigirRol
 import com.eduracha.models.*
 import com.eduracha.repository.SolicitudCursoRepository
 import io.ktor.http.*
@@ -19,8 +22,12 @@ fun Application.solicitudCursoRoutes() {
 
             // Estudiante solicita unirse con código
             post("/unirse") {
+                val usuarioToken = call.exigirUsuario() ?: return@post
                 try {
                     val request = call.receive<SolicitudRequest>()
+                    if (!usuarioToken.esDuenoOPrivilegiado(request.estudianteId)) {
+                        return@post call.respond(HttpStatusCode.Forbidden, mapOf("error" to "No puedes crear solicitudes a nombre de otro estudiante"))
+                    }
 
                     val curso = repo.buscarCursoPorCodigo(request.codigoCurso)
                         ?: return@post call.respond(
@@ -62,6 +69,10 @@ fun Application.solicitudCursoRoutes() {
 
             // Ver solicitudes pendientes del docente
             get("/docente/{docenteId}") {
+                val usuarioToken = call.exigirUsuario() ?: return@get
+                if (usuarioToken.uid != call.parameters["docenteId"] && usuarioToken.rol != "admin") {
+                    return@get call.respond(HttpStatusCode.Forbidden, mapOf("error" to "No autorizado"))
+                }
                 val docenteId = call.parameters["docenteId"]
                     ?: return@get call.respond(
                         HttpStatusCode.BadRequest,
@@ -69,11 +80,8 @@ fun Application.solicitudCursoRoutes() {
                     )
                 try {
                     val solicitudes = repo.obtenerSolicitudesPendientesPorDocente(docenteId)
-                    if (solicitudes.isEmpty()) {
-                        call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No hay solicitudes pendientes"))
-                    } else {
-                        call.respond(HttpStatusCode.OK, solicitudes)
-                    }
+                    // Lista vacía = 200 [] (antes 404, que la app mostraba como error)
+                    call.respond(HttpStatusCode.OK, solicitudes)
                 } catch (e: Exception) {
                     e.printStackTrace()
                     call.respond(
@@ -85,6 +93,10 @@ fun Application.solicitudCursoRoutes() {
 
             // Ver solicitudes del estudiante
             get("/estudiante/{estudianteId}") {
+                val usuarioToken = call.exigirUsuario() ?: return@get
+                if (!usuarioToken.esDuenoOPrivilegiado(call.parameters["estudianteId"] ?: "")) {
+                    return@get call.respond(HttpStatusCode.Forbidden, mapOf("error" to "No autorizado"))
+                }
                 val estudianteId = call.parameters["estudianteId"]
                     ?: return@get call.respond(
                         HttpStatusCode.BadRequest,
@@ -92,11 +104,8 @@ fun Application.solicitudCursoRoutes() {
                     )
                 try {
                     val solicitudes = repo.obtenerSolicitudesPorEstudiante(estudianteId)
-                    if (solicitudes.isEmpty()) {
-                        call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No hay solicitudes registradas"))
-                    } else {
-                        call.respond(HttpStatusCode.OK, solicitudes)
-                    }
+                    // Lista vacía = 200 [] (antes 404, que la app mostraba como error)
+                    call.respond(HttpStatusCode.OK, solicitudes)
                 } catch (e: Exception) {
                     e.printStackTrace()
                     call.respond(
@@ -109,6 +118,7 @@ fun Application.solicitudCursoRoutes() {
             // Profesor responde (aceptar o rechazar)
             
 post("/responder/{solicitudId}") {
+    call.exigirRol("docente", "admin") ?: return@post
     val solicitudId = call.parameters["solicitudId"]
         ?: return@post call.respond(
             HttpStatusCode.BadRequest,
@@ -194,11 +204,8 @@ post("/responder/{solicitudId}") {
                     val cursoRepo = com.eduracha.repository.CursoRepository()
                     val estudiantes = cursoRepo.obtenerEstudiantesPorCurso(cursoId)
 
-                    if (estudiantes.isEmpty()) {
-                        call.respond(HttpStatusCode.NotFound, mapOf("mensaje" to "No hay estudiantes en este curso"))
-                    } else {
-                        call.respond(HttpStatusCode.OK, estudiantes)
-                    }
+                    // Lista vacía = 200 [] (antes 404, que la app mostraba como error)
+                    call.respond(HttpStatusCode.OK, estudiantes)
                 } catch (e: Exception) {
                     e.printStackTrace()
                     call.respond(
@@ -209,6 +216,7 @@ post("/responder/{solicitudId}") {
             }
             // Cambiar estado de estudiante en curso
 post("/curso/{cursoId}/estudiante/{estudianteId}/estado") {
+    call.exigirRol("docente", "admin") ?: return@post
     val cursoId = call.parameters["cursoId"]
         ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el ID del curso"))
 
@@ -329,6 +337,7 @@ get("/curso/{cursoId}/estudiante/{estudianteId}/progreso") {
 
 
 post("/curso/{cursoId}/regenerar-vidas") {
+    call.exigirRol("docente", "admin") ?: return@post
     try {
         val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")
             ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Token no proporcionado"))

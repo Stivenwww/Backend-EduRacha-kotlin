@@ -9,10 +9,14 @@ object FirebaseConfig {
     private val databaseUrl = "https://console.firebase.google.com/project/eduracha-41314/database/eduracha-41314-default-rtdb/data/~2F?hl=es-419"
 
     fun init() {
-        val serviceAccount = FileInputStream("serviceAccountKey.json")
+        val base64 = System.getenv("FIREBASE_CREDENTIALS_BASE64")
+        ?: throw IllegalStateException("Firebase credentials not found")
 
+        val bytes = Base64.getDecoder().decode(base64)
+        val credentials = GoogleCredentials.fromStream(bytes.inputStream())
+        
         val options = FirebaseOptions.builder()
-            .setCredentials(com.google.auth.oauth2.GoogleCredentials.fromStream(serviceAccount))
+            .setCredentials(credentials)
             .setDatabaseUrl(databaseUrl)
             .build()
 

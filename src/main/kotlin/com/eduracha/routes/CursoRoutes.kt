@@ -17,7 +17,11 @@ import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.github.cdimascio.dotenv.dotenv
 import kotlinx.serialization.Serializable
+import com.eduracha.ai.AiConfig
+import com.eduracha.ai.AiProviderFactory
+import com.eduracha.ai.AiService
 import com.eduracha.repository.RachaRepository
+import com.eduracha.services.CursoVigencia
 
 /**
  * DTO para serializar estudiantes con Gson
@@ -75,8 +79,26 @@ fun Application.cursoRoutes() {
     val explicacionRepo = ExplicacionRepository()
     val solicitudPreguntasRepo = SolicitudPreguntasRepository()
 
-    val dotenv = dotenv()
-    val openAiKey = dotenv["OPENAI_API_KEY"]
+    //val dotenv = dotenv()
+    //val openAiKey = dotenv["OPENAI_API_KEY"]
+ // Cargar dotenv
+    val dotenvLocal = try { dotenv { ignoreIfMissing = true } } catch (_: Exception) { null }
+    fun getEnv(key: String): String? =
+        System.getenv(key) ?: dotenvLocal?.get(key)
+
+val openAiKey = getEnv("OPENAI_API_KEY")
+
+    // IA desacoplada (Groq/OpenAI/Anthropic/Ollama vía AI_*). Prioritaria sobre legacy.
+    val aiDesacoplada: AiService? = try {
+        val cfg = AiConfig.desdeEntorno(::getEnv)
+        AiConfig.validar(cfg)
+        AiService(AiProviderFactory.crear(cfg)).also {
+            println("CursoRoutes: proveedor IA activo: ${it.proveedorActual} (${cfg.model})")
+        }
+    } catch (e: Exception) {
+        println("CursoRoutes: IA desacoplada no disponible: ${e.message}")
+        null
+    }
 
     val client = HttpClient(CIO) {
         engine {
@@ -89,22 +111,42 @@ fun Application.cursoRoutes() {
         }
     }
 
-    val iaService = if (!openAiKey.isNullOrEmpty()) {
-        OpenAIService(client, openAiKey)
-    } else null
+    //val iaService = if (!openAiKey.isNullOrEmpty()) {
+       // OpenAIService(client, openAiKey)
+
+          val iaService =
+        if (!openAiKey.isNullOrBlank()) OpenAIService(client, openAiKey)
+        else null
+    
     
     routing {
         route("/api/cursos") {
 
             post {
                 val curso = call.receive<Curso>()
-                val id = repo.crearCurso(curso)
+                val normalizado = try {
+                    CursoVigencia.normalizarParaCrear(curso)
+                } catch (e: IllegalArgumentException) {
+                    return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to (e.message ?: "Duración inválida"))
+                    )
+                }
+                val id = repo.crearCurso(normalizado)
                 call.respond(mapOf("message" to "Curso creado exitosamente", "id" to id))
             }
 
             get {
-                val cursos = repo.obtenerCursos()
-                call.respond(cursos)
+                try {
+                    val cursos = repo.obtenerCursos()
+                    call.respond(cursos)
+                } catch (e: Exception) {
+                    call.application.environment.log.error("GET /api/cursos falló", e)
+                    call.respond(
+                        HttpStatusCode.ServiceUnavailable,
+                        mapOf("error" to "No se pudieron cargar los cursos: ${e.message ?: "error interno"}")
+                    )
+                }
             }
 
             get("{id}") {
@@ -126,17 +168,61 @@ fun Application.cursoRoutes() {
                     status = HttpStatusCode.BadRequest
                 )
                 val curso = call.receive<Curso>()
-                repo.actualizarCurso(id, curso)
+                val existente = try { repo.obtenerCursoPorId(id) } catch (_: Exception) { null }
+                val normalizado = try {
+                    CursoVigencia.normalizarParaActualizar(id, existente, curso)
+                } catch (e: IllegalArgumentException) {
+                    return@put call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to (e.message ?: "Duración inválida"))
+                    )
+                }
+                repo.actualizarCurso(id, normalizado)
                 call.respond(mapOf("message" to "Curso actualizado correctamente"))
             }
 
             delete("{id}") {
                 val id = call.parameters["id"] ?: return@delete call.respondText(
-                    "Falta ID", 
+                    "Falta ID",
                     status = HttpStatusCode.BadRequest
                 )
                 repo.eliminarCurso(id)
                 call.respond(mapOf("message" to "Curso eliminado"))
+            }
+
+            // Repara cursos creados antes del fix de vigencia: recalcula
+            // fechaInicio/fechaFin desde duracionDias y regenera la programación.
+            // Body opcional: {"duracionDias": 30, "fechaInicio": 123}
+            post("{id}/reprogramar") {
+                val id = call.parameters["id"] ?: return@post call.respond(
+                    HttpStatusCode.BadRequest, mapOf("error" to "Falta ID")
+                )
+                val existente = try { repo.obtenerCursoPorId(id) }
+                catch (e: Exception) {
+                    return@post call.respond(
+                        HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error leyendo curso"))
+                    )
+                } ?: return@post call.respond(HttpStatusCode.NotFound, mapOf("error" to "Curso no encontrado"))
+                val body = try { call.receive<Map<String, Long>>() } catch (_: Exception) { emptyMap() }
+                val duracion = (body["duracionDias"]?.toInt() ?: existente.duracionDias).takeIf { it > 0 }
+                    ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "duracionDias inválida"))
+                val inicio = body["fechaInicio"]?.takeIf { it > 0 } ?: existente.fechaInicio.takeIf { it > 0 }
+                    ?: System.currentTimeMillis()
+                val normalizado = try {
+                    CursoVigencia.normalizarParaActualizar(
+                        id, existente,
+                        existente.copy(duracionDias = duracion, fechaInicio = inicio)
+                    )
+                } catch (e: IllegalArgumentException) {
+                    return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "Duración inválida")))
+                }
+                repo.actualizarCurso(id, normalizado)
+                call.respond(mapOf(
+                    "message" to "Curso reprogramado correctamente",
+                    "duracionDias" to normalizado.duracionDias,
+                    "fechaInicio" to normalizado.fechaInicio,
+                    "fechaFin" to normalizado.fechaFin
+                ))
             }
 
             get("{id}/temas") {
@@ -252,21 +338,28 @@ fun Application.cursoRoutes() {
                         )
                     }
                     else if (request.generarConIA) {
-                        if (iaService == null) {
+                        if (aiDesacoplada == null && iaService == null) {
                             return@post call.respond(
                                 HttpStatusCode.ServiceUnavailable,
-                                mapOf("error" to "Servicio de IA no disponible. Verifica OPENAI_API_KEY en .env")
+                                mapOf("error" to "Servicio de IA no disponible. Configure AI_PROVIDER/AI_MODEL/AI_API_KEY (o OPENAI_API_KEY) en el entorno")
                             )
                         }
 
                         val temaId = repo.agregarTema(cursoId, temaConProgramacion)
 
-                        val explicacionGenerada = iaService.generarExplicacion(
-                            cursoId = cursoId,
-                            temaId = temaId,
-                            tituloTema = request.tema.titulo,
-                            contenidoTema = request.tema.contenido
-                        )
+                        val explicacionGenerada = if (aiDesacoplada != null) {
+                            aiDesacoplada.generarExplicacion(
+                                tituloTema = request.tema.titulo,
+                                contenidoTema = request.tema.contenido
+                            )
+                        } else {
+                            iaService!!.generarExplicacion(
+                                cursoId = cursoId,
+                                temaId = temaId,
+                                tituloTema = request.tema.titulo,
+                                contenidoTema = request.tema.contenido
+                            )
+                        }
 
                         explicacionRepo.actualizarExplicacion(
                             cursoId = cursoId,
@@ -372,10 +465,10 @@ fun Application.cursoRoutes() {
                 )
 
                 try {
-                    if (iaService == null) {
+                    if (aiDesacoplada == null && iaService == null) {
                         return@post call.respond(
                             HttpStatusCode.ServiceUnavailable,
-                            mapOf("error" to "Servicio de IA no disponible. Verifica tu OPENAI_API_KEY en .env")
+                            mapOf("error" to "Servicio de IA no disponible. Configure AI_PROVIDER/AI_MODEL/AI_API_KEY (o OPENAI_API_KEY) en el entorno")
                         )
                     }
 
@@ -391,12 +484,19 @@ fun Application.cursoRoutes() {
                         null
                     }
 
-                    val explicacionGenerada = iaService.generarExplicacion(
-                        cursoId = cursoId,
-                        temaId = temaId,
-                        tituloTema = request?.tituloTema ?: tema.titulo,
-                        contenidoTema = request?.contenidoTema ?: tema.contenido
-                    )
+                    val explicacionGenerada = if (aiDesacoplada != null) {
+                        aiDesacoplada.generarExplicacion(
+                            tituloTema = request?.tituloTema ?: tema.titulo,
+                            contenidoTema = request?.contenidoTema ?: tema.contenido
+                        )
+                    } else {
+                        iaService!!.generarExplicacion(
+                            cursoId = cursoId,
+                            temaId = temaId,
+                            tituloTema = request?.tituloTema ?: tema.titulo,
+                            contenidoTema = request?.contenidoTema ?: tema.contenido
+                        )
+                    }
 
                     explicacionRepo.actualizarExplicacion(
                         cursoId = cursoId,

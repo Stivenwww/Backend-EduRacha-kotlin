@@ -149,7 +149,9 @@ class OpenAIService(private val client: HttpClient, private val openAiApiKey: St
                 "fechaCreacion" to Instant.now().toString()
             )
 
-            refBase.setValueAsync(data).get()
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                refBase.setValueAsync(data).get()
+            }
 
             explicacion
 
@@ -291,7 +293,9 @@ class OpenAIService(private val client: HttpClient, private val openAiApiKey: St
                     explicacionCorrecta = ai.explicacionCorrecta
                 )
 
-                newRef.setValueAsync(pregunta).get()
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    newRef.setValueAsync(pregunta).get()
+                }
                 saved.add(pregunta)
             }
 

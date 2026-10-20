@@ -1,5 +1,8 @@
 package com.eduracha.repository
 
+import com.eduracha.utils.lecturaFirebase
+import com.eduracha.utils.reanudarConError
+
 import com.google.firebase.database.*
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.Serializable
@@ -28,7 +31,7 @@ class RachaRepository {
     suspend fun obtenerRankingPorCurso(
         cursoId: String, 
         filtro: String
-    ): List<RankingItem> = suspendCancellableCoroutine { cont ->
+    ): List<RankingItem> = lecturaFirebase { cont ->
         
         println(" [RachaRepository] Obteniendo ranking")
         println("   - CursoId: $cursoId")
@@ -38,6 +41,7 @@ class RachaRepository {
         refCursos.child(cursoId).child("estudiantes")
             .addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(estudiantesSnapshot: DataSnapshot) {
+                try {
                     
                     if (!estudiantesSnapshot.exists()) {
                         println(" No hay estudiantes en el curso")
@@ -129,7 +133,10 @@ class RachaRepository {
                                 }
                             })
                     }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "RachaRepository.kt")
                 }
+            }
 
                 override fun onCancelled(error: DatabaseError) {
                     println("Error obteniendo estudiantes: ${error.message}")
@@ -170,12 +177,13 @@ class RachaRepository {
      *  Ranking general (todos los cursos)
      */
     suspend fun obtenerRankingGeneral(filtro: String): List<RankingItem> =
-        suspendCancellableCoroutine { cont ->
+        lecturaFirebase { cont ->
             
             println(" Obteniendo ranking general, filtro: $filtro")
             
             refCursos.addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(cursosSnapshot: DataSnapshot) {
+                try {
                     
                     val listaTotal = mutableListOf<RankingItem>()
                     var cursosProcesados = 0
@@ -282,7 +290,10 @@ class RachaRepository {
                                 })
                         }
                     }
+                } catch (e: Exception) {
+                    reanudarConError(cont, e, "RachaRepository.kt")
                 }
+            }
 
                 override fun onCancelled(error: DatabaseError) {
                     println(" Error en ranking general: ${error.message}")

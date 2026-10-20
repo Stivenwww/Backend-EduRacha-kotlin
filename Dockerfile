@@ -1,18 +1,20 @@
-# ---- Stage 1: Build ----
-FROM gradle:8.6-jdk17 AS build
-
+# 1. Etapa de construcción
+FROM gradle:8-jdk17 AS build
 WORKDIR /app
+
 COPY . .
+RUN gradle clean build -x test
 
-RUN chmod +x ./gradlew && ./gradlew shadowJar --no-daemon
-
-# ---- Stage 2: Runtime ----
+# 2. Etapa de ejecución
 FROM eclipse-temurin:17-jre
-
 WORKDIR /app
 
-COPY --from=build /app/build/libs/*.jar /app/app.jar
+# Copia el JAR “fat” generado por Ktor
+COPY --from=build /app/build/libs/*.jar app.jar
+
+# Sevalla asigna el puerto vía variable PORT
+ENV PORT=8080
 
 EXPOSE 8080
 
-CMD ["java", "-jar", "/app/app.jar"]
+CMD ["java", "-jar", "app.jar"]

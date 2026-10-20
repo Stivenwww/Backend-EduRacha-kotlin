@@ -2,7 +2,7 @@ plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.ktor)
     kotlin("plugin.serialization") version "2.0.20"
-    // id("com.github.johnrengelman.shadow") version "8.1.1"
+    //id("com.github.johnrengelman.shadow") version "8.1.1"
 }
 
 tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
@@ -11,7 +11,6 @@ tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJ
     archiveVersion.set("")
     mergeServiceFiles()
 }
-
 
 group = "com.eduracha"
 version = "0.0.1"
@@ -31,11 +30,14 @@ dependencies {
     implementation("io.ktor:ktor-server-netty:2.3.12")
 
     implementation("io.ktor:ktor-server-config-yaml:2.3.12")
+
+    // Logger oficial del backend (para imprimir logs en consola)
     implementation("ch.qos.logback:logback-classic:1.4.14")
 
     implementation("io.ktor:ktor-server-content-negotiation:2.3.12")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.12")
 
+    // Autenticación
     implementation("io.ktor:ktor-server-auth:2.3.12")
     implementation("io.ktor:ktor-server-auth-jwt:2.3.12")
 
@@ -51,11 +53,11 @@ dependencies {
     implementation("io.ktor:ktor-client-core:3.3.0")
     implementation("io.ktor:ktor-client-cio:3.3.0")
 
-    // Apache POI para Excel nuevo
+    // Apache POI para Excel 
     implementation("org.apache.poi:poi:5.2.3")
     implementation("org.apache.poi:poi-ooxml:5.2.3")
 
-    // nuevo   
+    // 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
 
 
@@ -65,3 +67,23 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:1.9.23")
 }
 
+/* 
+ktor {
+    fatJar {
+        archiveFileName.set("app.jar")
+    }
+}
+*/
+
+tasks.withType<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar> {
+    archiveBaseName.set("app")
+    archiveClassifier.set("all")
+    archiveVersion.set("")
+    mergeServiceFiles()
+
+    manifest {
+        attributes(
+            "Main-Class" to "io.ktor.server.netty.EngineMain"
+        )
+    }
+}

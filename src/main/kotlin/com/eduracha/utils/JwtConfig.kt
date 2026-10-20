@@ -7,10 +7,16 @@ import com.auth0.jwt.interfaces.DecodedJWT
 import java.util.*
 
 object JwtConfig {
-    private const val secret = "EduRachaSuperSecretKey123!" 
+    // En producción debe venir de JWT_SECRET. Fallback solo para desarrollo local.
+    private val secret: String = System.getenv("JWT_SECRET")
+        ?: System.getProperty("JWT_SECRET")
+        ?: "EduRachaSuperSecretKey123!"
     private const val issuer = "eduracha-server"
+    val isDefaultSecret: Boolean get() = secret == "EduRachaSuperSecretKey123!"
     private val algorithm = Algorithm.HMAC256(secret)
     private val verifier: JWTVerifier = JWT.require(algorithm).withIssuer(issuer).build()
+
+    fun jwtSecret(): String = secret
 
     // Genera token JWT con uid, email y rol
     fun generateToken(uid: String, email: String, rol: String = "estudiante"): String {
