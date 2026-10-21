@@ -69,8 +69,9 @@ class AiServiceTest {
         try {
             svc.generarPreguntasJson("tema", 1)
             assertFalse(true, "debió fallar")
-        } catch (e: IllegalArgumentException) {
-            assertTrue(e.message!!.contains("correcta"))
+        } catch (e: IllegalStateException) {
+            // Las preguntas mal formadas se descartan; si no queda ninguna válida, se informa
+            assertTrue(e.message!!.contains("válidas"))
         }
     }
 }

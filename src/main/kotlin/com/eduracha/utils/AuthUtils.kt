@@ -27,10 +27,14 @@ suspend fun ApplicationCall.verifyFirebaseToken(): UserTokenData? {
     return try {
         val firebaseToken = FirebaseAuth.getInstance().verifyIdToken(token)
 
+        val rolClaim = firebaseToken.claims["rol"]?.toString()?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
         UserTokenData(
             uid = firebaseToken.uid,
             email = firebaseToken.email ?: return null,
-            rol = firebaseToken.claims["rol"]?.toString() ?: "estudiante"
+            // El rol real vive en usuarios/{uid}/rol. Muchos usuarios (registro desde la app,
+            // Google) no tienen el claim en el token: antes quedaban todos como "estudiante"
+            // y los docentes recibían "Acceso denegado".
+            rol = rolClaim ?: RolesUsuario.obtener(firebaseToken.uid) ?: "estudiante"
         )
     } catch (e: Exception) {
         println("Error verificando token Firebase: ${e.message}")
@@ -94,4 +98,39 @@ suspend fun ApplicationCall.getUserByUid(uid: String): Usuario? {
         println("Excepción en getUserByUid: ${e.message}")
         null
     }
+}
+
+
+/**
+ * Rol del usuario leído de Realtime Database (usuarios/{uid}/rol), con caché corta
+ * para no consultar Firebase en cada petición.
+ */
+object RolesUsuario {
+    private const val VIGENCIA_MS = 60_000L
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+
+    suspend fun obtener(uid: String): String? {
+        val ahora = System.currentTimeMillis()
+        cache[uid]?.let { (rol, hora) -> if (ahora - hora < VIGENCIA_MS) return rol }
+        val rol = try {
+            lecturaFirebase<String?> { cont ->
+                FirebaseDatabase.getInstance().getReference("usuarios/$uid/rol")
+                    .addListenerForSingleValueEvent(object : ValueEventListener {
+                        override fun onDataChange(snapshot: DataSnapshot) {
+                            cont.resume(snapshot.getValue(String::class.java)?.trim()?.lowercase())
+                        }
+                        override fun onCancelled(error: DatabaseError) {
+                            cont.resume(null)
+                        }
+                    })
+            }
+        } catch (e: Exception) {
+            println("No se pudo leer el rol de $uid: ${e.message}")
+            null
+        }
+        if (rol != null) cache[uid] = rol to ahora
+        return rol
+    }
+
+    fun olvidar(uid: String) { cache.remove(uid) }
 }

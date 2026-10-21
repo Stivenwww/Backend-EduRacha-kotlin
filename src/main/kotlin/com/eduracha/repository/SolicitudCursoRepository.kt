@@ -17,11 +17,15 @@ class SolicitudCursoRepository {
 
     // Buscar curso por código
     suspend fun buscarCursoPorCodigo(codigo: String): Curso? = lecturaFirebase { cont ->
-        refCursos.orderByChild("codigo").equalTo(codigo)
+        refCursos.orderByChild("codigo").equalTo(codigo.trim())
             .addListenerForSingleValueEvent(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
                 try {
-                    val curso = snapshot.children.firstOrNull()?.getValue(Curso::class.java)
+                    val nodo = snapshot.children.firstOrNull()
+                    // El id real es la clave del nodo: algunos cursos no guardan el campo "id"
+                    val curso = nodo?.getValue(Curso::class.java)?.let { c ->
+                        if (c.id.isNullOrBlank()) c.copy(id = nodo.key) else c
+                    }
                     cont.resume(curso)
                 } catch (e: Exception) {
                     reanudarConError(cont, e, "SolicitudCursoRepository.kt")
@@ -34,18 +38,23 @@ class SolicitudCursoRepository {
             })
     }
 
-    // Verificar si ya existe una solicitud
-    suspend fun verificarSolicitudExistente(estudianteId: String, cursoId: String): Boolean =
+    /**
+     * Estado de la solicitud que impide enviar otra (PENDIENTE o ACEPTADA), o null si puede enviarla.
+     * Una solicitud RECHAZADA ya no bloquea: el estudiante puede volver a pedir el ingreso.
+     * Se leen los valores crudos para que un registro antiguo con otro formato no tumbe la verificación.
+     */
+    suspend fun solicitudQueBloquea(estudianteId: String, cursoId: String): String? =
         lecturaFirebase { cont ->
             refSolicitudes.orderByChild("estudianteId").equalTo(estudianteId)
                 .addListenerForSingleValueEvent(object : ValueEventListener {
                     override fun onDataChange(snapshot: DataSnapshot) {
                 try {
-                        val existe = snapshot.children.any {
-                            val solicitud = it.getValue(SolicitudCurso::class.java)
-                            solicitud?.cursoId == cursoId
-                        }
-                        cont.resume(existe)
+                        val bloqueante = snapshot.children.mapNotNull { hijo ->
+                            val curso = hijo.child("cursoId").getValue(String::class.java)
+                            val estado = hijo.child("estado").value?.toString()?.uppercase() ?: "PENDIENTE"
+                            if (curso == cursoId && estado in setOf("PENDIENTE", "ACEPTADA")) estado else null
+                        }.firstOrNull()
+                        cont.resume(bloqueante)
                 } catch (e: Exception) {
                     reanudarConError(cont, e, "SolicitudCursoRepository.kt")
                 }
@@ -56,6 +65,20 @@ class SolicitudCursoRepository {
                     }
                 })
         }
+
+    /** El estudiante ya figura como activo en cursos/{cursoId}/estudiantes. */
+    suspend fun estaInscrito(cursoId: String, estudianteId: String): Boolean = lecturaFirebase { cont ->
+        refCursos.child(cursoId).child("estudiantes").child(estudianteId)
+            .addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val estado = snapshot.child("estado").getValue(String::class.java)?.lowercase()
+                    cont.resume(snapshot.exists() && estado != "eliminado")
+                }
+                override fun onCancelled(error: DatabaseError) {
+                    cont.resumeWithException(error.toException())
+                }
+            })
+    }
 
     // Crear solicitud
     suspend fun crearSolicitud(solicitud: SolicitudCurso): String = lecturaFirebase { cont ->
@@ -253,4 +276,4 @@ class SolicitudCursoRepository {
             }
         }
     }
-}
+}

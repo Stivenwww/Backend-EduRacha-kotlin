@@ -435,7 +435,7 @@ class ServicioReportesExcel(
             row.createCell(0).apply { setCellValue(estudianteId); cellStyle = dataStyle }
             row.createCell(1).apply { setCellValue(nombre); cellStyle = dataStyle }
             row.createCell(2).apply { setCellValue(total.toDouble()); cellStyle = dataStyle }
-            row.createCell(3).apply { setCellValue("%.1f".format(promedio)); cellStyle = dataStyle }
+            row.createCell(3).apply { setCellValue(redondear1(promedio)); cellStyle = dataStyle }
             row.createCell(4).apply { setCellValue(xp.toDouble()); cellStyle = dataStyle }
 
             try {
@@ -514,7 +514,7 @@ class ServicioReportesExcel(
                 row.createCell(0).apply { setCellValue(nombre); cellStyle = dataStyle }
                 row.createCell(1).apply { setCellValue(intentos.toDouble()); cellStyle = dataStyle }
                 row.createCell(2).apply { setCellValue(mejor.toDouble()); cellStyle = dataStyle }
-                row.createCell(3).apply { setCellValue("%.1f".format(promTiempo)); cellStyle = dataStyle }
+                row.createCell(3).apply { setCellValue(redondear1(promTiempo)); cellStyle = dataStyle }
                 row.createCell(4).apply { setCellValue(if (aprobado) "Aprobado" else "En progreso"); cellStyle = if (aprobado) correctaStyle else incorrectaStyle }
             }
         }
@@ -554,7 +554,7 @@ class ServicioReportesExcel(
                 val row = sheet.createRow(rowNum++)
                 row.createCell(0).apply { setCellValue(nombre); cellStyle = dataStyle }
                 row.createCell(1).apply { setCellValue(quizzesFinalizados.size.toDouble()); cellStyle = dataStyle }
-                row.createCell(2).apply { setCellValue("%.1f".format(quizzesFinalizados.map { it.preguntasCorrectas }.average())); cellStyle = dataStyle }
+                row.createCell(2).apply { setCellValue(redondear1(quizzesFinalizados.map { it.preguntasCorrectas }.average())); cellStyle = dataStyle }
                 row.createCell(3).apply { setCellValue(quizzesFinalizados.sumOf { it.experienciaGanada }.toDouble()); cellStyle = dataStyle }
                 row.createCell(4).apply { setCellValue(quizzesFinalizados.map { it.temaId }.distinct().size.toDouble()); cellStyle = dataStyle }
             }
@@ -598,9 +598,9 @@ class ServicioReportesExcel(
                 val row = sheet.createRow(rowNum++)
                 row.createCell(0).apply { setCellValue(nombre); cellStyle = dataStyle }
                 row.createCell(1).apply { setCellValue(quizzesRango.size.toDouble()); cellStyle = dataStyle }
-                row.createCell(2).apply { setCellValue("%.1f".format(quizzesRango.map { it.preguntasCorrectas }.average())); cellStyle = dataStyle }
+                row.createCell(2).apply { setCellValue(redondear1(quizzesRango.map { it.preguntasCorrectas }.average())); cellStyle = dataStyle }
                 row.createCell(3).apply { setCellValue(quizzesRango.sumOf { it.experienciaGanada }.toDouble()); cellStyle = dataStyle }
-                row.createCell(4).apply { setCellValue("%.1f".format(quizzesRango.map { it.tiempoUsadoSeg }.average())); cellStyle = dataStyle }
+                row.createCell(4).apply { setCellValue(redondear1(quizzesRango.map { it.tiempoUsadoSeg }.average())); cellStyle = dataStyle }
             }
         }
 
@@ -612,3 +612,6 @@ class ServicioReportesExcel(
         return Pair(out.toByteArray(), "reporte_rango_${curso.titulo.replace(" ", "_")}_${desde}_${hasta}.xlsx")
     }
 }
+
+/** Número con un decimal (celda numérica en Excel, no texto; evita NaN cuando no hay datos). */
+fun redondear1(valor: Double): Double = if (valor.isNaN() || valor.isInfinite()) 0.0 else Math.round(valor * 10) / 10.0

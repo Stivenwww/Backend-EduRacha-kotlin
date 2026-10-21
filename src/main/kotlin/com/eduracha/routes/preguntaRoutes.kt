@@ -10,6 +10,8 @@ import io.ktor.server.response.*
 import io.ktor.server.request.*
 import io.ktor.server.routing.*
 import io.ktor.http.*
+import io.ktor.http.content.*
+import io.ktor.utils.io.toByteArray
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.github.cdimascio.dotenv.dotenv
@@ -155,8 +157,83 @@ fun Application.preguntasRoutes(aiService: com.eduracha.ai.AiService? = null) {
             }
         }
 
+        // LECTURA DE PDF: devuelve el texto real extraído (o un error claro si no se puede leer)
+        post("/api/pdf/extraer") {
+            call.exigirRol("docente", "admin") ?: return@post
+            val pdf = recibirPdf(call) ?: return@post
+            val resultado = com.eduracha.utils.LectorPdf.leer(pdf.second, pdf.first)
+            if (resultado.error != null) {
+                return@post call.respond(HttpStatusCode.UnprocessableEntity, mapOf("error" to resultado.error))
+            }
+            call.respond(HttpStatusCode.OK, resultado)
+        }
+
         // RUTAS DE IA (Generación Automática) — usa AiService desacoplado si existe
         route("/api/preguntas/ia") {
+
+            // POST /api/preguntas/ia/generar-desde-pdf (multipart: archivo, cursoId, temaId, cantidad, dificultad)
+            // Lee el PDF, genera preguntas con su contenido real y las deja pendientes de revisión.
+            post("/generar-desde-pdf") {
+                call.exigirRol("docente", "admin") ?: return@post
+                val ia = aiService ?: return@post call.respond(
+                    HttpStatusCode.ServiceUnavailable,
+                    mapOf("error" to "La IA no está configurada en el servidor (AI_PROVIDER / AI_API_KEY).")
+                )
+                try {
+                    val campos = mutableMapOf<String, String>()
+                    var nombre = "documento.pdf"
+                    var bytes: ByteArray? = null
+                    call.receiveMultipart().forEachPart { parte ->
+                        when (parte) {
+                            is io.ktor.http.content.PartData.FormItem -> campos[parte.name ?: ""] = parte.value
+                            is io.ktor.http.content.PartData.FileItem -> {
+                                nombre = parte.originalFileName ?: nombre
+                                bytes = parte.provider().toByteArray()
+                            }
+                            else -> {}
+                        }
+                        parte.dispose()
+                    }
+                    val cursoId = campos["cursoId"]?.takeIf { it.isNotBlank() }
+                        ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el curso"))
+                    val temaId = campos["temaId"]?.takeIf { it.isNotBlank() }
+                        ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el tema"))
+                    val cantidad = (campos["cantidad"]?.toIntOrNull() ?: 5).coerceIn(1, 20)
+                    val dificultad = campos["dificultad"]?.lowercase()?.takeIf { it in setOf("facil", "medio", "dificil") }
+                    val contenido = bytes ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Adjunta un archivo PDF"))
+
+                    if (!explicacionRepo.tieneExplicacionAprobada(cursoId, temaId)) {
+                        return@post call.respond(
+                            HttpStatusCode.PreconditionFailed,
+                            mapOf("error" to "No se pueden generar preguntas. El tema no tiene una explicación aprobada.")
+                        )
+                    }
+
+                    val pdf = com.eduracha.utils.LectorPdf.leer(contenido, nombre)
+                    if (pdf.error != null) {
+                        return@post call.respond(HttpStatusCode.UnprocessableEntity, mapOf("error" to pdf.error))
+                    }
+                    val validadas = ia.generarPreguntasDesdeDocumento(pdf.texto, cantidad, dificultad)
+                    val guardadas = ia.guardarPreguntasGeneradas(cursoId, temaId, validadas, "PDF: ${pdf.nombre} (${pdf.paginas} págs.)")
+                    val aviso = if (pdf.truncado) " Solo se usó la primera parte del documento por su extensión." else ""
+                    call.respond(
+                        HttpStatusCode.OK,
+                        PreguntasIAResponse(
+                            message = "Se leyeron ${pdf.paginas} páginas de \"${pdf.nombre}\" y se generaron ${guardadas.size} preguntas. " +
+                                "Quedan pendientes de revisión.$aviso",
+                            total = guardadas.size,
+                            preguntas = guardadas
+                        )
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to (e.message ?: "Error generando preguntas desde el PDF"))
+                    )
+                }
+            }
+
             // POST /api/preguntas/ia/generar
             post("/generar") {
                 call.exigirRol("docente", "admin") ?: return@post
@@ -217,4 +294,23 @@ fun Application.preguntasRoutes(aiService: com.eduracha.ai.AiService? = null) {
             }
         }
     }
+}
+
+/** Lee el primer archivo de un formulario multipart. Responde 400 y devuelve null si no hay archivo. */
+private suspend fun recibirPdf(call: ApplicationCall): Pair<String, ByteArray>? {
+    var nombre = "documento.pdf"
+    var bytes: ByteArray? = null
+    call.receiveMultipart().forEachPart { parte ->
+        if (parte is io.ktor.http.content.PartData.FileItem && bytes == null) {
+            nombre = parte.originalFileName ?: nombre
+            bytes = parte.provider().toByteArray()
+        }
+        parte.dispose()
+    }
+    val contenido = bytes
+    if (contenido == null) {
+        call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Adjunta un archivo PDF"))
+        return null
+    }
+    return nombre to contenido
 }

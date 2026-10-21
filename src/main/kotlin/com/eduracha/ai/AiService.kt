@@ -99,6 +99,73 @@ class AiService(private val provider: AiProvider) {
         return PreguntaJsonValidada(p.texto.trim(), p.opciones, dif, p.explicacionCorrecta?.trim())
     }
 
+    /**
+     * Genera preguntas a partir del texto de un documento (por ejemplo, un PDF).
+     * Si el texto es largo se divide en fragmentos repartidos por todo el documento y se
+     * reparte la cantidad entre ellos, para no quedarse solo con el principio.
+     * [dificultad]: facil | medio | dificil | null (mixta).
+     */
+    suspend fun generarPreguntasDesdeDocumento(texto: String, cantidad: Int, dificultad: String? = null): List<PreguntaJsonValidada> {
+        require(cantidad in 1..20) { "cantidad debe estar entre 1 y 20" }
+        require(texto.isNotBlank()) { "El documento no tiene texto" }
+        val fragmentos = com.eduracha.utils.LectorPdf.fragmentar(texto)
+        val maxFragmentos = minOf(cantidad, 6, fragmentos.size)
+        // Fragmentos espaciados a lo largo del documento
+        val elegidos = (0 until maxFragmentos).map { i -> fragmentos[(i * fragmentos.size) / maxFragmentos] }
+        val reparto = (0 until maxFragmentos).map { i -> cantidad / maxFragmentos + if (i < cantidad % maxFragmentos) 1 else 0 }
+        val instruccionDificultad = when (dificultad?.lowercase()) {
+            "facil", "medio", "dificil" -> " Todas con dificultad \"${dificultad.lowercase()}\"."
+            else -> " Mezcla dificultades facil, medio y dificil."
+        }
+        val resultado = mutableListOf<PreguntaJsonValidada>()
+        val vistas = mutableSetOf<String>()
+        var ultimoError: Exception? = null
+        elegidos.forEachIndexed { i, fragmento ->
+            if (reparto[i] == 0) return@forEachIndexed
+            try {
+                val lote = generarPreguntasJson(
+                    "Usa SOLO la información de este fragmento del documento. No inventes datos que no estén en él." +
+                        instruccionDificultad + "\n\nFRAGMENTO:\n" + fragmento,
+                    reparto[i]
+                )
+                lote.forEach { p ->
+                    val clave = p.texto.lowercase().replace(Regex("\\s+"), " ").trim()
+                    if (vistas.add(clave)) resultado += p
+                }
+            } catch (e: Exception) {
+                ultimoError = e
+                println("Fragmento ${i + 1}/${elegidos.size} sin preguntas: ${e.message}")
+            }
+        }
+        if (resultado.isEmpty()) {
+            throw IllegalStateException("La IA no pudo generar preguntas con este documento" +
+                (ultimoError?.message?.let { ": $it" } ?: "."))
+        }
+        return resultado.take(cantidad)
+    }
+
+    /** Guarda en Firebase (pendientes de revisión) preguntas ya validadas. */
+    suspend fun guardarPreguntasGeneradas(
+        cursoId: String, temaId: String, validadas: List<PreguntaJsonValidada>, origen: String
+    ): List<Pregunta> {
+        val refBase = FirebaseDatabase.getInstance().getReference("preguntas")
+        return validadas.map { v ->
+            val id = refBase.push().key ?: UUID.randomUUID().toString()
+            val p = Pregunta(
+                id = id, cursoId = cursoId, temaId = temaId, texto = v.texto,
+                opciones = v.opciones.map { Opcion(it.id, it.texto, it.esCorrecta) },
+                fuente = "ia", estado = "pendiente_revision", dificultad = v.dificultad,
+                creadoPor = provider.nombre, fechaCreacion = Instant.now().toString(),
+                metadatosIA = MetadatosIA(generadoPor = provider.nombre, instruccion = origen.take(300)),
+                explicacionCorrecta = v.explicacionCorrecta
+            )
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                refBase.child(id).setValueAsync(p).get()
+            }
+            p
+        }
+    }
+
     suspend fun generarYGuardarPreguntas(cursoId: String, temaId: String, temaTexto: String, cantidad: Int): List<Pregunta> {
         val validadas = generarPreguntasJson(temaTexto, cantidad)
         val refBase = FirebaseDatabase.getInstance().getReference("preguntas")
@@ -109,7 +176,7 @@ class AiService(private val provider: AiProvider) {
                 opciones = v.opciones.map { Opcion(it.id, it.texto, it.esCorrecta) },
                 fuente = "ia", estado = "pendiente_revision", dificultad = v.dificultad,
                 creadoPor = provider.nombre, fechaCreacion = Instant.now().toString(),
-                metadatosIA = MetadatosIA(generadoPor = provider.nombre, instruccion = "Generar preguntas sobre $temaTexto"),
+                metadatosIA = MetadatosIA(generadoPor = provider.nombre, instruccion = "Generar preguntas sobre ${temaTexto.take(300)}"),
                 explicacionCorrecta = v.explicacionCorrecta
             )
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {

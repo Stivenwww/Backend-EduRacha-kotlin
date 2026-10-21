@@ -57,6 +57,9 @@ dependencies {
     implementation("org.apache.poi:poi:5.2.3")
     implementation("org.apache.poi:poi-ooxml:5.2.3")
 
+    // Lectura de PDF para generar preguntas con IA a partir del contenido real del documento
+    implementation("org.apache.pdfbox:pdfbox:2.0.32")
+
     // 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
 

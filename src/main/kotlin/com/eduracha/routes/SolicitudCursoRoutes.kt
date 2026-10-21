@@ -25,30 +25,45 @@ fun Application.solicitudCursoRoutes() {
                 val usuarioToken = call.exigirUsuario() ?: return@post
                 try {
                     val request = call.receive<SolicitudRequest>()
-                    if (!usuarioToken.esDuenoOPrivilegiado(request.estudianteId)) {
-                        return@post call.respond(HttpStatusCode.Forbidden, mapOf("error" to "No puedes crear solicitudes a nombre de otro estudiante"))
+                    // Un estudiante siempre solicita a su nombre: se usa el UID del token, no el que
+                    // envía la app (antes, un UID vacío o desactualizado en el celular daba 403).
+                    val estudianteId = if (usuarioToken.rol in setOf("docente", "admin") && request.estudianteId.isNotBlank())
+                        request.estudianteId else usuarioToken.uid
+                    if (request.codigoCurso.isBlank()) {
+                        return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el código del curso"))
                     }
 
                     val curso = repo.buscarCursoPorCodigo(request.codigoCurso)
                         ?: return@post call.respond(
                             HttpStatusCode.NotFound,
-                            mapOf("error" to "Código de curso inválido")
+                            mapOf("error" to "No encontramos un curso con ese código")
                         )
+                    val cursoId = curso.id
+                        ?: return@post call.respond(HttpStatusCode.NotFound, mapOf("error" to "Curso no disponible"))
+                    if (curso.estado.equals("inactivo", ignoreCase = true) || curso.estado.equals("archivado", ignoreCase = true)) {
+                        return@post call.respond(HttpStatusCode.Conflict, mapOf("error" to "Este curso no está recibiendo estudiantes"))
+                    }
 
-                    val existe = repo.verificarSolicitudExistente(request.estudianteId, curso.id!!)
-                    if (existe) {
-                        return@post call.respond(
+                    if (repo.estaInscrito(cursoId, estudianteId)) {
+                        return@post call.respond(HttpStatusCode.Conflict, mapOf("error" to "Ya estás inscrito en este curso"))
+                    }
+                    when (repo.solicitudQueBloquea(estudianteId, cursoId)) {
+                        "PENDIENTE" -> return@post call.respond(
                             HttpStatusCode.Conflict,
-                            mapOf("error" to "Ya existe una solicitud para este curso")
+                            mapOf("error" to "Ya enviaste una solicitud para este curso. Espera la respuesta del docente.")
+                        )
+                        "ACEPTADA" -> return@post call.respond(
+                            HttpStatusCode.Conflict,
+                            mapOf("error" to "Tu solicitud para este curso ya fue aceptada")
                         )
                     }
 
                     val solicitud = SolicitudCurso(
-                        cursoId = curso.id,
+                        cursoId = cursoId,
                         codigoCurso = curso.codigo,
-                        estudianteId = request.estudianteId,
-                        estudianteNombre = request.estudianteNombre,
-                        estudianteEmail = request.estudianteEmail,
+                        estudianteId = estudianteId,
+                        estudianteNombre = request.estudianteNombre.ifBlank { usuarioToken.email.substringBefore("@") },
+                        estudianteEmail = request.estudianteEmail.ifBlank { usuarioToken.email },
                         fechaSolicitud = System.currentTimeMillis().toString(),
                         mensaje = request.mensaje
                     )
@@ -366,4 +381,4 @@ post("/curso/{cursoId}/regenerar-vidas") {
 }
         }
     }
-}
+}

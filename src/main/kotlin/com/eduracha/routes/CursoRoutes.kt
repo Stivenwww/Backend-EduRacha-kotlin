@@ -8,6 +8,8 @@ import com.eduracha.repository.ExplicacionRepository
 import com.eduracha.repository.SolicitudPreguntasRepository
 import com.eduracha.services.OpenAIService
 import com.eduracha.utils.getUserFromToken
+import com.eduracha.utils.exigirRol
+import com.eduracha.utils.exigirUsuario
 import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
@@ -123,7 +125,14 @@ val openAiKey = getEnv("OPENAI_API_KEY")
         route("/api/cursos") {
 
             post {
-                val curso = call.receive<Curso>()
+                val docente = call.exigirRol("docente", "admin") ?: return@post
+                val recibido = call.receive<Curso>()
+                // El curso queda a nombre de quien lo crea (un admin puede indicar otro docente)
+                val curso = if (docente.rol == "admin" && recibido.docenteId.isNotBlank()) recibido
+                            else recibido.copy(docenteId = docente.uid)
+                if (curso.titulo.isBlank()) {
+                    return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "El curso necesita un título"))
+                }
                 val normalizado = try {
                     CursoVigencia.normalizarParaCrear(curso)
                 } catch (e: IllegalArgumentException) {
@@ -167,8 +176,12 @@ val openAiKey = getEnv("OPENAI_API_KEY")
                     "Falta ID", 
                     status = HttpStatusCode.BadRequest
                 )
+                val docente = call.exigirRol("docente", "admin") ?: return@put
                 val curso = call.receive<Curso>()
                 val existente = try { repo.obtenerCursoPorId(id) } catch (_: Exception) { null }
+                if (existente != null && docente.rol != "admin" && existente.docenteId.isNotBlank() && existente.docenteId != docente.uid) {
+                    return@put call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Este curso pertenece a otro docente"))
+                }
                 val normalizado = try {
                     CursoVigencia.normalizarParaActualizar(id, existente, curso)
                 } catch (e: IllegalArgumentException) {
@@ -186,6 +199,12 @@ val openAiKey = getEnv("OPENAI_API_KEY")
                     "Falta ID",
                     status = HttpStatusCode.BadRequest
                 )
+                val docente = call.exigirRol("docente", "admin") ?: return@delete
+                val existente = try { repo.obtenerCursoPorId(id) } catch (_: Exception) { null }
+                    ?: return@delete call.respond(HttpStatusCode.NotFound, mapOf("error" to "Curso no encontrado"))
+                if (docente.rol != "admin" && existente.docenteId.isNotBlank() && existente.docenteId != docente.uid) {
+                    return@delete call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Este curso pertenece a otro docente"))
+                }
                 repo.eliminarCurso(id)
                 call.respond(mapOf("message" to "Curso eliminado"))
             }
@@ -895,6 +914,7 @@ val openAiKey = getEnv("OPENAI_API_KEY")
              * Obtener ranking por EXPERIENCIA (por defecto)
              */
             get("/ranking/{cursoId}") {
+                call.exigirUsuario() ?: return@get
                 val cursoId = call.parameters["cursoId"]
                 
                 if (cursoId.isNullOrBlank()) {
@@ -927,6 +947,7 @@ val openAiKey = getEnv("OPENAI_API_KEY")
              * Obtener ranking por RACHA
              */
             get("/ranking/{cursoId}/racha") {
+                call.exigirUsuario() ?: return@get
                 val cursoId = call.parameters["cursoId"]
                 
                 if (cursoId.isNullOrBlank()) {
@@ -959,6 +980,7 @@ val openAiKey = getEnv("OPENAI_API_KEY")
              * Obtener ranking por VIDAS
              */
             get("/ranking/{cursoId}/vidas") {
+                call.exigirUsuario() ?: return@get
                 val cursoId = call.parameters["cursoId"]
                 
                 if (cursoId.isNullOrBlank()) {
@@ -992,6 +1014,7 @@ val openAiKey = getEnv("OPENAI_API_KEY")
              * Parámetros: filtro = experiencia | racha | vidas
              */
             get("/ranking/general/{filtro}") {
+                call.exigirUsuario() ?: return@get
                 val filtro = call.parameters["filtro"] ?: "experiencia"
 
                 try {
@@ -1016,6 +1039,7 @@ val openAiKey = getEnv("OPENAI_API_KEY")
              * Ranking general por experiencia
              */
             get("/ranking/general") {
+                call.exigirUsuario() ?: return@get
                 try {
                     println("🔹 GET /api/cursos/ranking/general (EXPERIENCIA)")
                     val ranking = rachaRepo.obtenerRankingGeneral("experiencia")
@@ -1091,4 +1115,4 @@ val openAiKey = getEnv("OPENAI_API_KEY")
 
     }
 
-} 
+} 

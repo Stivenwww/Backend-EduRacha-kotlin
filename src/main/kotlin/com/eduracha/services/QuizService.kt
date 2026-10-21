@@ -389,7 +389,7 @@ class QuizService(
             temaId = quiz.temaId,
             estudianteId = userId,
             porcentaje = porcentaje,
-            aprobado = aprobado && quiz.modo == "oficial",
+            aprobado = aprobado && (quiz.modo == "oficial" || quiz.modo == "final"),
             preguntasIds = quiz.preguntas.map { it.preguntaId },
             modo = quiz.modo
         )
@@ -608,17 +608,27 @@ class QuizService(
         val curso = cursoRepo.obtenerCursoPorId(cursoId)
             ?: throw IllegalStateException("Curso no encontrado")
 
-        val perfilCurso = quizRepo.obtenerPerfilCurso(userId, cursoId)
-            ?: throw IllegalStateException("No se encontró progreso del curso")
+        val idsTemas = curso.temas?.map { (clave, tema) -> tema.id ?: clave }?.toSet() ?: emptySet()
+        val aprobadosDelCurso = temasAprobados(userId, cursoId).intersect(idsTemas)
+        val totalTemas = idsTemas.size
 
-        val temasAprobados = perfilCurso.temasCompletados.values.filter { it.aprobado }
-        val totalTemas = curso.temas?.size ?: 0
-
-        if (temasAprobados.size < totalTemas) {
+        if (totalTemas == 0 || aprobadosDelCurso.size < totalTemas) {
             throw IllegalStateException(
                 "Aún no has aprobado todos los temas.\n" +
-                "Progreso: ${temasAprobados.size}/$totalTemas temas completados"
+                "Progreso: ${aprobadosDelCurso.size}/$totalTemas temas completados"
             )
+        }
+
+        // El quiz final se aprueba una sola vez: si ya está aprobado no se vuelve a abrir
+        val estadoFinal = try { quizRepo.leerEstadoTemaCrudo(userId, cursoId, "quiz_final") } catch (e: Exception) { null }
+        val finalYaAprobado = (estadoFinal?.get("aprobado") as? Boolean ?: false) ||
+            quizRepo.obtenerQuizzesPorEstudiante(userId, cursoId).any { q ->
+                val total = q.preguntasCorrectas + q.preguntasIncorrectas
+                q.modo == "final" && q.estado == "finalizado" && total > 0 &&
+                    (q.preguntasCorrectas * 100) / total >= PORCENTAJE_APROBACION
+            }
+        if (finalYaAprobado) {
+            throw IllegalStateException("Ya aprobaste el quiz final de este curso.")
         }
 
         val progreso = ServicioProgreso.obtenerOReconstruirProgreso(userId, cursoId)
@@ -667,6 +677,12 @@ class QuizService(
         }
     }
 
+    /**
+     * Guarda el resultado del quiz en usuarios/{uid}/cursos/{cursoId}/temasCompletados/{temaId}.
+     * - Solo actualiza los campos que cambian (no borra los que escribe la app).
+     * - "aprobado" nunca vuelve a false y "porcentajeObtenido" guarda el mejor resultado oficial/final.
+     * - Las prácticas suman intentos y preguntas vistas, pero no cambian la aprobación.
+     */
     private suspend fun actualizarEstadoTema(
         cursoId: String,
         temaId: String,
@@ -677,37 +693,61 @@ class QuizService(
         modo: String
     ) {
         try {
-            val perfilCurso = quizRepo.obtenerPerfilCurso(estudianteId, cursoId)
-            if (perfilCurso != null) {
-                val estadoActual = perfilCurso.temasCompletados[temaId]
-                val ahora = System.currentTimeMillis()
+            val actual = quizRepo.leerEstadoTemaCrudo(estudianteId, cursoId, temaId) ?: emptyMap()
+            fun entero(c: String) = (actual[c] as? Number)?.toInt() ?: 0
+            val ahora = System.currentTimeMillis()
 
-                val quizzesRealizados = (estadoActual?.quizzesRealizados ?: 0) + 1
-
-                val porcentajePromedio = if (estadoActual == null) porcentaje else {
-                    ((estadoActual.porcentajePromedio * (quizzesRealizados - 1)) + porcentaje) / quizzesRealizados
-                }
-
-                val preguntasVistasActual = (estadoActual?.preguntasVistas ?: emptySet()) + preguntasIds.toSet()
-
-                val temaAprobado = aprobado || (estadoActual?.aprobado ?: false)
-
-                val nuevoEstado = EstadoTema(
-                    temaId = temaId,
-                    quizzesRealizados = quizzesRealizados,
-                    quizzesRequeridos = estadoActual?.quizzesRequeridos ?: 0,
-                    porcentajePromedio = porcentajePromedio,
-                    aprobado = temaAprobado,
-                    fechaPrimerIntento = estadoActual?.fechaPrimerIntento ?: ahora,
-                    fechaUltimoIntento = ahora,
-                    preguntasVistas = preguntasVistasActual
-                )
-
-                quizRepo.actualizarEstadoTema(estudianteId, cursoId, temaId, nuevoEstado)
+            val realizados = entero("quizzesRealizados") + 1
+            val promedio = ((entero("porcentajePromedio") * (realizados - 1)) + porcentaje) / realizados
+            val vistasPrevias: Set<String> = when (val v = actual["preguntasVistas"]) {
+                is List<*> -> v.mapNotNull { it?.toString() }.toSet()
+                is Map<*, *> -> v.values.mapNotNull { it?.toString() }.toSet()
+                else -> emptySet()
             }
+            val yaAprobado = actual["aprobado"] as? Boolean ?: false
+
+            val campos = mutableMapOf<String, Any?>(
+                "temaId" to temaId,
+                "quizzesRealizados" to realizados,
+                "porcentajePromedio" to promedio,
+                "aprobado" to (yaAprobado || aprobado),
+                "fechaPrimerIntento" to ((actual["fechaPrimerIntento"] as? Number)?.toLong() ?: ahora),
+                "fechaUltimoIntento" to ahora,
+                "preguntasVistas" to (vistasPrevias + preguntasIds).toList()
+            )
+            if (modo != "practica") {
+                campos["porcentajeObtenido"] = max(entero("porcentajeObtenido"), porcentaje)
+                if (aprobado) {
+                    campos["timestampUltimoQuiz"] = ahora
+                    campos["ultimaFechaQuiz"] = java.time.LocalDate.now().toString()
+                }
+            }
+            quizRepo.actualizarCamposEstadoTema(estudianteId, cursoId, temaId, campos)
         } catch (ex: Exception) {
-            println("Error actualizando estado del tema: ${ex.message}")
+            println("Error actualizando estado del tema $temaId: ${ex.message}")
         }
+    }
+
+    /**
+     * Temas aprobados del estudiante: los marcados en temasCompletados o con un quiz oficial
+     * finalizado con 80% o más (misma regla que GET /quiz/aprobados, que usa el mapa de islas).
+     */
+    suspend fun temasAprobados(userId: String, cursoId: String): Set<String> {
+        val desdePerfil = try {
+            quizRepo.obtenerPerfilCurso(userId, cursoId)?.temasCompletados
+                ?.filter { it.value.aprobado }?.keys ?: emptySet()
+        } catch (e: Exception) { emptySet() }
+        val desdeQuizzes = try {
+            quizRepo.obtenerQuizzesPorEstudiante(userId, cursoId)
+                .filter { q ->
+                    val total = q.preguntasCorrectas + q.preguntasIncorrectas
+                    q.estado == "finalizado" && q.modo != "final" && q.modo != "practica" &&
+                        total > 0 && (q.preguntasCorrectas * 100) / total >= PORCENTAJE_APROBACION
+                }
+                .map { it.temaId }
+                .toSet()
+        } catch (e: Exception) { emptySet() }
+        return (desdePerfil + desdeQuizzes) - "quiz_final"
     }
 
     private suspend fun crearSolicitudMasPreguntas(
@@ -779,4 +819,4 @@ data class DatosEstudiante(
 )
 
 
-class QuizAbandonadoPorVidasException(message: String) : IllegalStateException(message)
+class QuizAbandonadoPorVidasException(message: String) : IllegalStateException(message)

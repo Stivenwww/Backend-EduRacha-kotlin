@@ -285,8 +285,8 @@ class QuizRepository {
                         val temasCompletados = mutableMapOf<String, EstadoTema>()
                         temasCompletadosSnapshot.children.forEach { temaSnap ->
                             val temaId = temaSnap.key ?: return@forEach
-                            val estadoTema = temaSnap.getValue(EstadoTema::class.java) ?: return@forEach
-                            temasCompletados[temaId] = estadoTema
+                            // Lectura manual: getValue() no admite Set y el nodo mezcla campos de la app y del backend
+                            temasCompletados[temaId] = estadoTemaDesde(temaId, temaSnap)
                         }
 
                         val perfilCurso = PerfilCurso(
@@ -336,4 +336,56 @@ class QuizRepository {
                 else cont.resume(Unit)
             }
     }
+
+    /** Construye un EstadoTema leyendo los valores crudos (tolera listas o mapas en preguntasVistas). */
+    fun estadoTemaDesde(temaId: String, snap: DataSnapshot): EstadoTema {
+        fun entero(campo: String) = (snap.child(campo).value as? Number)?.toInt() ?: 0
+        fun largo(campo: String) = (snap.child(campo).value as? Number)?.toLong() ?: 0L
+        val vistas: Set<String> = when (val v = snap.child("preguntasVistas").value) {
+            is List<*> -> v.mapNotNull { it?.toString() }.toSet()
+            is Map<*, *> -> v.values.mapNotNull { it?.toString() }.toSet()
+            else -> emptySet()
+        }
+        return EstadoTema(
+            temaId = temaId,
+            quizzesRealizados = entero("quizzesRealizados"),
+            quizzesRequeridos = entero("quizzesRequeridos"),
+            porcentajePromedio = entero("porcentajePromedio"),
+            aprobado = snap.child("aprobado").value as? Boolean ?: false,
+            fechaPrimerIntento = largo("fechaPrimerIntento"),
+            fechaUltimoIntento = largo("fechaUltimoIntento"),
+            preguntasVistas = vistas,
+            ciclosCompletados = entero("ciclosCompletados"),
+            necesitaMasPreguntas = snap.child("necesitaMasPreguntas").value as? Boolean ?: false,
+            fechaSolicitudMasPreguntas = (snap.child("fechaSolicitudMasPreguntas").value as? Number)?.toLong(),
+            ultimoReinicioBanco = (snap.child("ultimoReinicioBanco").value as? Number)?.toLong()
+        )
+    }
+
+    /** Valores crudos del estado de un tema (o null si no existe). */
+    suspend fun leerEstadoTemaCrudo(uid: String, cursoId: String, temaId: String): Map<String, Any?>? =
+        lecturaFirebase { cont ->
+            database.getReference("usuarios/$uid/cursos/$cursoId/temasCompletados/$temaId")
+                .addListenerForSingleValueEvent(object : ValueEventListener {
+                    override fun onDataChange(snapshot: DataSnapshot) {
+                        @Suppress("UNCHECKED_CAST")
+                        cont.resume(snapshot.value as? Map<String, Any?>)
+                    }
+                    override fun onCancelled(error: DatabaseError) {
+                        cont.resumeWithException(error.toException())
+                    }
+                })
+        }
+
+    /**
+     * Actualiza solo los campos indicados del estado del tema (updateChildren).
+     * Así no se borran los campos que escribe la app (racha, cooldown) y no se usa setValue con Set.
+     */
+    suspend fun actualizarCamposEstadoTema(uid: String, cursoId: String, temaId: String, campos: Map<String, Any?>) =
+        lecturaFirebase<Unit> { cont ->
+            database.getReference("usuarios/$uid/cursos/$cursoId/temasCompletados/$temaId")
+                .updateChildren(campos) { error, _ ->
+                    if (error != null) cont.resumeWithException(error.toException()) else cont.resume(Unit)
+                }
+        }
 }

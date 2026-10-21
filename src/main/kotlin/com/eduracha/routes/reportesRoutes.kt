@@ -1,7 +1,8 @@
 package com.eduracha.routes
 
 import com.eduracha.services.ServicioReportesExcel
-import com.eduracha.utils.getUserFromToken
+import com.eduracha.utils.verifyFirebaseToken
+import com.eduracha.repository.CursoRepository
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.response.*
@@ -89,17 +90,43 @@ data class EstudianteRangoData(
     val tiempoPromedio: String
 )
 
+/**
+ * Reportes: solo el docente dueño del curso o un admin.
+ * Responde 401/403/404 con un mensaje claro y devuelve false cuando no puede continuar.
+ */
+private val cursoRepoReportes by lazy { CursoRepository() }
+
+suspend fun ApplicationCall.puedeVerReportesDelCurso(cursoId: String?): Boolean {
+    val usuario = verifyFirebaseToken()
+    if (usuario == null) {
+        respond(HttpStatusCode.Unauthorized, mapOf("error" to "Tu sesión expiró. Vuelve a iniciar sesión."))
+        return false
+    }
+    val rol = usuario.rol?.lowercase()
+    if (rol !in setOf("docente", "admin")) {
+        respond(HttpStatusCode.Forbidden, mapOf("error" to "Solo los docentes pueden ver reportes"))
+        return false
+    }
+    if (rol == "admin" || cursoId.isNullOrBlank()) return true
+    val curso = try { cursoRepoReportes.obtenerCursoPorId(cursoId) } catch (e: Exception) { null }
+    if (curso == null) {
+        respond(HttpStatusCode.NotFound, mapOf("error" to "Curso no encontrado"))
+        return false
+    }
+    if (curso.docenteId.isNotBlank() && curso.docenteId != usuario.uid) {
+        respond(HttpStatusCode.Forbidden, mapOf("error" to "Este curso pertenece a otro docente"))
+        return false
+    }
+    return true
+}
+
 fun Route.reportesRoutes(servicioReportes: ServicioReportesExcel) {
 
     route("/reportes") {
 
         get("/debug/cursos/{cursoId}/diario/fecha/{fecha}") {
             try {
-                val usuario = call.getUserFromToken()
-                    ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "No autorizado"))
-
-                if (usuario.rol !in listOf("docente", "admin"))
-                    return@get call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Acceso denegado"))
+                if (!call.puedeVerReportesDelCurso(call.parameters["cursoId"])) return@get
 
                 val cursoId = call.parameters["cursoId"]!!
                 val fecha = LocalDate.parse(call.parameters["fecha"]!!)
@@ -114,11 +141,7 @@ fun Route.reportesRoutes(servicioReportes: ServicioReportesExcel) {
 
         get("/debug/cursos/{cursoId}/tema/{temaId}") {
             try {
-                val usuario = call.getUserFromToken()
-                    ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "No autorizado"))
-
-                if (usuario.rol !in listOf("docente", "admin"))
-                    return@get call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Acceso denegado"))
+                if (!call.puedeVerReportesDelCurso(call.parameters["cursoId"])) return@get
 
                 val cursoId = call.parameters["cursoId"]!!
                 val temaId = call.parameters["temaId"]!!
@@ -133,11 +156,7 @@ fun Route.reportesRoutes(servicioReportes: ServicioReportesExcel) {
 
         get("/debug/cursos/{cursoId}/general") {
             try {
-                val usuario = call.getUserFromToken()
-                    ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "No autorizado"))
-
-                if (usuario.rol !in listOf("docente", "admin"))
-                    return@get call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Acceso denegado"))
+                if (!call.puedeVerReportesDelCurso(call.parameters["cursoId"])) return@get
 
                 val cursoId = call.parameters["cursoId"]!!
 
@@ -151,11 +170,7 @@ fun Route.reportesRoutes(servicioReportes: ServicioReportesExcel) {
 
         get("/debug/cursos/{cursoId}/rango") {
             try {
-                val usuario = call.getUserFromToken()
-                    ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "No autorizado"))
-
-                if (usuario.rol !in listOf("docente", "admin"))
-                    return@get call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Acceso denegado"))
+                if (!call.puedeVerReportesDelCurso(call.parameters["cursoId"])) return@get
 
                 val cursoId = call.parameters["cursoId"]!!
                 val desde = LocalDate.parse(call.request.queryParameters["desde"]!!)
@@ -171,18 +186,14 @@ fun Route.reportesRoutes(servicioReportes: ServicioReportesExcel) {
 
         get("/cursos/{cursoId}/diario/fecha/{fecha}") {
             try {
-                val usuario = call.getUserFromToken()
-                    ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "No autorizado"))
-
-                if (usuario.rol !in listOf("docente", "admin"))
-                    return@get call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Acceso denegado"))
+                if (!call.puedeVerReportesDelCurso(call.parameters["cursoId"])) return@get
 
                 val cursoId = call.parameters["cursoId"]!!
                 val fecha = LocalDate.parse(call.parameters["fecha"]!!)
 
                 val (bytes, nombre) = servicioReportes.generarReporteDiario(cursoId, fecha)
 
-                call.response.headers.append(HttpHeaders.ContentDisposition, "attachment; filename=\"$nombre\"")
+                call.response.headers.append(HttpHeaders.ContentDisposition, contentDispositionExcel(nombre))
                 call.respondBytes(bytes, contentType = ContentType.parse("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 
             } catch (e: Exception) {
@@ -192,18 +203,14 @@ fun Route.reportesRoutes(servicioReportes: ServicioReportesExcel) {
 
         get("/cursos/{cursoId}/tema/{temaId}") {
             try {
-                val usuario = call.getUserFromToken()
-                    ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "No autorizado"))
-
-                if (usuario.rol !in listOf("docente", "admin"))
-                    return@get call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Acceso denegado"))
+                if (!call.puedeVerReportesDelCurso(call.parameters["cursoId"])) return@get
 
                 val cursoId = call.parameters["cursoId"]!!
                 val temaId = call.parameters["temaId"]!!
 
                 val (bytes, nombre) = servicioReportes.generarReportePorTema(cursoId, temaId)
 
-                call.response.headers.append(HttpHeaders.ContentDisposition, "attachment; filename=\"$nombre\"")
+                call.response.headers.append(HttpHeaders.ContentDisposition, contentDispositionExcel(nombre))
                 call.respondBytes(bytes, contentType = ContentType.parse("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 
             } catch (e: Exception) {
@@ -213,17 +220,13 @@ fun Route.reportesRoutes(servicioReportes: ServicioReportesExcel) {
 
         get("/cursos/{cursoId}/general") {
             try {
-                val usuario = call.getUserFromToken()
-                    ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "No autorizado"))
-
-                if (usuario.rol !in listOf("docente", "admin"))
-                    return@get call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Acceso denegado"))
+                if (!call.puedeVerReportesDelCurso(call.parameters["cursoId"])) return@get
 
                 val cursoId = call.parameters["cursoId"]!!
 
                 val (bytes, nombre) = servicioReportes.generarReporteGeneralCurso(cursoId)
 
-                call.response.headers.append(HttpHeaders.ContentDisposition, "attachment; filename=\"$nombre\"")
+                call.response.headers.append(HttpHeaders.ContentDisposition, contentDispositionExcel(nombre))
                 call.respondBytes(bytes, contentType = ContentType.parse("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 
             } catch (e: Exception) {
@@ -233,11 +236,7 @@ fun Route.reportesRoutes(servicioReportes: ServicioReportesExcel) {
 
         get("/cursos/{cursoId}/rango") {
             try {
-                val usuario = call.getUserFromToken()
-                    ?: return@get call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "No autorizado"))
-
-                if (usuario.rol !in listOf("docente", "admin"))
-                    return@get call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Acceso denegado"))
+                if (!call.puedeVerReportesDelCurso(call.parameters["cursoId"])) return@get
 
                 val cursoId = call.parameters["cursoId"]!!
                 val desde = LocalDate.parse(call.request.queryParameters["desde"]!!)
@@ -245,7 +244,7 @@ fun Route.reportesRoutes(servicioReportes: ServicioReportesExcel) {
 
                 val (bytes, nombre) = servicioReportes.generarReporteRangoFechas(cursoId, desde, hasta)
 
-                call.response.headers.append(HttpHeaders.ContentDisposition, "attachment; filename=\"$nombre\"")
+                call.response.headers.append(HttpHeaders.ContentDisposition, contentDispositionExcel(nombre))
                 call.respondBytes(bytes, contentType = ContentType.parse("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 
             } catch (e: Exception) {
@@ -253,4 +252,16 @@ fun Route.reportesRoutes(servicioReportes: ServicioReportesExcel) {
             }
         }
     }
+}
+
+/**
+ * Content-Disposition válido aunque el nombre tenga acentos o espacios:
+ * un nombre ASCII de respaldo y el nombre real en UTF-8 (RFC 5987).
+ */
+fun contentDispositionExcel(nombre: String): String {
+    val sinAcentos = java.text.Normalizer.normalize(nombre, java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}"), "")
+    val ascii = sinAcentos.replace(Regex("[^A-Za-z0-9._-]+"), "_").trim('_').ifBlank { "reporte.xlsx" }
+    val utf8 = java.net.URLEncoder.encode(nombre, Charsets.UTF_8).replace("+", "%20")
+    return "attachment; filename=\"$ascii\"; filename*=UTF-8''$utf8"
 }

@@ -5,6 +5,9 @@ import com.eduracha.utils.reanudarConError
 
 import com.google.firebase.database.*
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.Serializable
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -25,124 +28,55 @@ class RachaRepository {
     private val refUsuarios = db.getReference("usuarios")
     private val refCursos = db.getReference("cursos")
 
-    
-     // Obtener ranking por curso con filtro
-     
-    suspend fun obtenerRankingPorCurso(
-        cursoId: String, 
-        filtro: String
-    ): List<RankingItem> = lecturaFirebase { cont ->
-        
-        println(" [RachaRepository] Obteniendo ranking")
-        println("   - CursoId: $cursoId")
-        println("   - Filtro: $filtro")
-        
-        // 1️ Obtener estudiantes del curso
-        refCursos.child(cursoId).child("estudiantes")
-            .addListenerForSingleValueEvent(object : ValueEventListener {
-                override fun onDataChange(estudiantesSnapshot: DataSnapshot) {
-                try {
-                    
-                    if (!estudiantesSnapshot.exists()) {
-                        println(" No hay estudiantes en el curso")
-                        cont.resume(emptyList())
-                        return
-                    }
-
-                    val listaRanking = mutableListOf<RankingItem>()
-                    var procesados = 0
-                    val total = estudiantesSnapshot.childrenCount.toInt()
-
-                    println("👥 Total estudiantes: $total")
-
-                    if (total == 0) {
-                        println(" No hay estudiantes para procesar")
-                        cont.resume(emptyList())
-                        return
-                    }
-
-                    estudiantesSnapshot.children.forEach { estudianteSnap ->
-                        val uid = estudianteSnap.key
-                        if (uid.isNullOrBlank()) {
-                            procesados++
-                            if (procesados == total) {
-                                cont.resume(ordenarPorFiltro(listaRanking, filtro))
-                            }
-                            return@forEach
-                        }
-
-                        val nombreCurso = estudianteSnap.child("nombre")
-                            .getValue(String::class.java) ?: "Estudiante"
-                        val estado = estudianteSnap.child("estado")
-                            .getValue(String::class.java)
-
-                        // Solo estudiantes activos
-                        if (estado != "activo") {
-                            println("Saltando $uid - Estado: $estado")
-                            procesados++
-                            if (procesados == total) {
-                                cont.resume(ordenarPorFiltro(listaRanking, filtro))
-                            }
-                            return@forEach
-                        }
-
-                        // Obtener progreso del estudiante
-                        refUsuarios.child(uid)
-                            .child("cursos")
-                            .child(cursoId)
-                            .child("progreso")
-                            .addListenerForSingleValueEvent(object : ValueEventListener {
-                                override fun onDataChange(progresoSnap: DataSnapshot) {
-                                    
-                                    val xp = progresoSnap.child("experiencia")
-                                        .getValue(Int::class.java) ?: 0
-                                    val racha = progresoSnap.child("diasConsecutivos")
-                                        .getValue(Int::class.java) ?: 0
-                                    val vidas = progresoSnap.child("vidas")
-                                        .getValue(Int::class.java) ?: 5
-                                    val nombreProg = progresoSnap.child("nombre")
-                                        .getValue(String::class.java)
-
-                                    println("$uid: XP=$xp, Racha=$racha, Vidas=$vidas")
-
-                                    listaRanking.add(
-                                        RankingItem(
-                                            estudianteId = uid,
-                                            nombre = nombreProg ?: nombreCurso,
-                                            experiencia = xp,
-                                            rachaDias = racha,
-                                            vidas = vidas,
-                                            cursoId = cursoId
-                                        )
-                                    )
-
-                                    procesados++
-                                    if (procesados == total) {
-                                        val ordenado = ordenarPorFiltro(listaRanking, filtro)
-                                        println("Ranking completado: ${ordenado.size} estudiantes")
-                                        cont.resume(ordenado)
-                                    }
-                                }
-
-                                override fun onCancelled(error: DatabaseError) {
-                                    println("Error progreso $uid: ${error.message}")
-                                    procesados++
-                                    if (procesados == total) {
-                                        cont.resume(ordenarPorFiltro(listaRanking, filtro))
-                                    }
-                                }
-                            })
-                    }
-                } catch (e: Exception) {
-                    reanudarConError(cont, e, "RachaRepository.kt")
-                }
-            }
-
-                override fun onCancelled(error: DatabaseError) {
-                    println("Error obteniendo estudiantes: ${error.message}")
-                    cont.resumeWithException(error.toException())
-                }
+    /** Lee un nodo de Firebase una sola vez (null si no existe o no se pudo leer). */
+    private suspend fun leer(ref: DatabaseReference): DataSnapshot? = try {
+        lecturaFirebase { cont ->
+            ref.addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) { cont.resume(snapshot) }
+                override fun onCancelled(error: DatabaseError) { cont.resume(null) }
             })
+        }
+    } catch (e: Exception) {
+        println("Lectura fallida ${ref.path}: ${e.message}")
+        null
+    }
+
+    private fun entero(snap: DataSnapshot, campo: String, defecto: Int = 0): Int =
+        when (val v = snap.child(campo).value) {
+            is Number -> v.toInt()
+            is String -> v.toIntOrNull() ?: defecto
+            else -> defecto
+        }
+
+    /** Estudiantes del curso que cuentan para el ranking (todos salvo los eliminados o inactivos). */
+    private fun estudiantesActivos(estudiantes: DataSnapshot): List<Pair<String, String>> =
+        estudiantes.children.mapNotNull { e ->
+            val uid = e.key?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val estado = (e.child("estado").value as? String)?.lowercase()
+            if (estado in setOf("eliminado", "inactivo", "bloqueado")) return@mapNotNull null
+            uid to ((e.child("nombre").value as? String)?.takeIf { it.isNotBlank() } ?: "Estudiante")
+        }
+
+    /**
+     * Ranking de un curso. Lee el progreso real de cada estudiante en
+     * usuarios/{uid}/cursos/{cursoId}/progreso. Los que aún no tienen progreso aparecen con 0.
+     */
+    suspend fun obtenerRankingPorCurso(cursoId: String, filtro: String): List<RankingItem> = coroutineScope {
+        val estudiantes = leer(refCursos.child(cursoId).child("estudiantes")) ?: return@coroutineScope emptyList()
+        val lista = estudiantesActivos(estudiantes).map { (uid, nombreCurso) ->
+            async {
+                val progreso = leer(refUsuarios.child(uid).child("cursos").child(cursoId).child("progreso"))
+                RankingItem(
+                    estudianteId = uid,
+                    nombre = (progreso?.child("nombre")?.value as? String)?.takeIf { it.isNotBlank() } ?: nombreCurso,
+                    experiencia = progreso?.let { entero(it, "experiencia") } ?: 0,
+                    rachaDias = progreso?.let { entero(it, "diasConsecutivos") } ?: 0,
+                    vidas = progreso?.let { entero(it, "vidas", 5) } ?: 5,
+                    cursoId = cursoId
+                )
+            }
+        }.awaitAll()
+        ordenarPorFiltro(lista, filtro)
     }
 
     /**
@@ -174,131 +108,34 @@ class RachaRepository {
     }
 
     /**
-     *  Ranking general (todos los cursos)
+     * Ranking general: suma la experiencia de cada estudiante en todos sus cursos
+     * (antes aparecía repetido una vez por curso).
      */
-    suspend fun obtenerRankingGeneral(filtro: String): List<RankingItem> =
-        lecturaFirebase { cont ->
-            
-            println(" Obteniendo ranking general, filtro: $filtro")
-            
-            refCursos.addListenerForSingleValueEvent(object : ValueEventListener {
-                override fun onDataChange(cursosSnapshot: DataSnapshot) {
-                try {
-                    
-                    val listaTotal = mutableListOf<RankingItem>()
-                    var cursosProcesados = 0
-                    val totalCursos = cursosSnapshot.childrenCount.toInt()
-
-                    if (totalCursos == 0) {
-                        cont.resume(emptyList())
-                        return
-                    }
-
-                    cursosSnapshot.children.forEach { cursoSnap ->
-                        val cursoId = cursoSnap.key ?: return@forEach
-                        val estudiantesSnap = cursoSnap.child("estudiantes")
-
-                        if (!estudiantesSnap.exists()) {
-                            cursosProcesados++
-                            if (cursosProcesados == totalCursos) {
-                                cont.resume(ordenarPorFiltro(listaTotal, filtro))
-                            }
-                            return@forEach
-                        }
-
-                        var estudiantesProcesados = 0
-                        val totalEstudiantes = estudiantesSnap.childrenCount.toInt()
-
-                        if (totalEstudiantes == 0) {
-                            cursosProcesados++
-                            if (cursosProcesados == totalCursos) {
-                                cont.resume(ordenarPorFiltro(listaTotal, filtro))
-                            }
-                            return@forEach
-                        }
-
-                        estudiantesSnap.children.forEach { estudianteSnap ->
-                            val uid = estudianteSnap.key
-                            if (uid.isNullOrBlank()) {
-                                estudiantesProcesados++
-                                if (estudiantesProcesados == totalEstudiantes) {
-                                    cursosProcesados++
-                                    if (cursosProcesados == totalCursos) {
-                                        cont.resume(ordenarPorFiltro(listaTotal, filtro))
-                                    }
-                                }
-                                return@forEach
-                            }
-
-                            val nombre = estudianteSnap.child("nombre")
-                                .getValue(String::class.java) ?: "Estudiante"
-                            val estado = estudianteSnap.child("estado")
-                                .getValue(String::class.java)
-
-                            if (estado != "activo") {
-                                estudiantesProcesados++
-                                if (estudiantesProcesados == totalEstudiantes) {
-                                    cursosProcesados++
-                                    if (cursosProcesados == totalCursos) {
-                                        cont.resume(ordenarPorFiltro(listaTotal, filtro))
-                                    }
-                                }
-                                return@forEach
-                            }
-
-                            refUsuarios.child(uid).child("cursos")
-                                .child(cursoId).child("progreso")
-                                .addListenerForSingleValueEvent(object : ValueEventListener {
-                                    override fun onDataChange(progresoSnap: DataSnapshot) {
-                                        
-                                        val xp = progresoSnap.child("experiencia")
-                                            .getValue(Int::class.java) ?: 0
-                                        val racha = progresoSnap.child("diasConsecutivos")
-                                            .getValue(Int::class.java) ?: 0
-                                        val vidas = progresoSnap.child("vidas")
-                                            .getValue(Int::class.java) ?: 5
-
-                                        listaTotal.add(
-                                            RankingItem(
-                                                estudianteId = uid,
-                                                nombre = nombre,
-                                                experiencia = xp,
-                                                rachaDias = racha,
-                                                vidas = vidas,
-                                                cursoId = cursoId
-                                            )
-                                        )
-
-                                        estudiantesProcesados++
-                                        if (estudiantesProcesados == totalEstudiantes) {
-                                            cursosProcesados++
-                                            if (cursosProcesados == totalCursos) {
-                                                cont.resume(ordenarPorFiltro(listaTotal, filtro))
-                                            }
-                                        }
-                                    }
-
-                                    override fun onCancelled(error: DatabaseError) {
-                                        estudiantesProcesados++
-                                        if (estudiantesProcesados == totalEstudiantes) {
-                                            cursosProcesados++
-                                            if (cursosProcesados == totalCursos) {
-                                                cont.resume(ordenarPorFiltro(listaTotal, filtro))
-                                            }
-                                        }
-                                    }
-                                })
-                        }
-                    }
-                } catch (e: Exception) {
-                    reanudarConError(cont, e, "RachaRepository.kt")
+    suspend fun obtenerRankingGeneral(filtro: String): List<RankingItem> = coroutineScope {
+        val cursos = leer(refCursos) ?: return@coroutineScope emptyList()
+        val porCurso = cursos.children.mapNotNull { c -> c.key?.let { it to c.child("estudiantes") } }
+            .flatMap { (cursoId, est) -> estudiantesActivos(est).map { (uid, nombre) -> Triple(cursoId, uid, nombre) } }
+            .map { (cursoId, uid, nombre) ->
+                async {
+                    val p = leer(refUsuarios.child(uid).child("cursos").child(cursoId).child("progreso"))
+                    RankingItem(
+                        estudianteId = uid,
+                        nombre = nombre,
+                        experiencia = p?.let { entero(it, "experiencia") } ?: 0,
+                        rachaDias = p?.let { entero(it, "diasConsecutivos") } ?: 0,
+                        vidas = p?.let { entero(it, "vidas", 5) } ?: 5
+                    )
                 }
-            }
-
-                override fun onCancelled(error: DatabaseError) {
-                    println(" Error en ranking general: ${error.message}")
-                    cont.resumeWithException(error.toException())
-                }
-            })
+            }.awaitAll()
+        val combinados = porCurso.groupBy { it.estudianteId }.map { (uid, items) ->
+            RankingItem(
+                estudianteId = uid,
+                nombre = items.first().nombre,
+                experiencia = items.sumOf { it.experiencia },
+                rachaDias = items.maxOf { it.rachaDias },
+                vidas = items.maxOf { it.vidas }
+            )
         }
+        ordenarPorFiltro(combinados, filtro)
+    }
 }
