@@ -3,4 +3,4 @@ ktor:
         modules:
             - com.eduracha.ApplicationKt.module
     deployment:
-        port: 8080
+        port: "$PORT:8080"

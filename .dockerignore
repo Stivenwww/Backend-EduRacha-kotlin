@@ -1,0 +1,21 @@
+# Secretos: nunca entran a la imagen (en Sevalla van como variables de entorno)
+.env
+.env.*
+!.env.example
+src/main/resources/serviceAccountKey.json
+**/*serviceAccount*.json
+!src/main/resources/firebase-service-account.example.json
+
+# Builds y caches locales
+build/
+.gradle/
+.kotlin/
+bin/
+out/
+
+# IDE y respaldos
+.idea/
+.vscode/
+*.iml
+_respaldo_correcciones/
+.git/
