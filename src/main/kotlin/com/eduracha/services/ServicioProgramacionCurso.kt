@@ -120,34 +120,23 @@ object ServicioProgramacionCurso {
         return ValidacionQuiz(true, "Puedes practicar este tema libremente")
     }
     
-    // Resto de validaciones para modo oficial...
+    // Las fechas de distribucionTemporal son solo una GUÍA de ritmo. Antes bloqueaban el quiz
+    // ("Este tema estará disponible en N días", "El período ya finalizó", "Ya completaste todos
+    // los quizzes", "Debes esperar 1 día") y el estudiante quedaba sin poder hacer nada aunque el
+    // mapa de islas le mostrara el tema abierto. El orden de las islas lo controla la app
+    // (se abre la siguiente al aprobar con 80%) y los intentos los limitan las vidas.
+    if (estadoTema?.aprobado == true) {
+        return ValidacionQuiz(true, "Tema aprobado: puedes repasarlo")
+    }
     val rangoTema = programacion.distribucionTemporal[temaId]
-        ?: return ValidacionQuiz(false, "Tema no encontrado en la programación")
-    
     val ahora = reloj()
-
-    if (ahora < rangoTema.fechaInicio) {
-        val diasRestantes = ((rangoTema.fechaInicio - ahora) / MILLIS_POR_DIA).toInt()
-        return ValidacionQuiz(false, "Este tema estará disponible en $diasRestantes días")
+    val mensaje = when {
+        rangoTema == null -> "Puedes realizar el quiz"
+        ahora < rangoTema.fechaInicio -> "Vas adelantado: este tema estaba sugerido para más adelante"
+        ahora > rangoTema.fechaFin -> "Vas un poco atrasado con este tema, ¡ponte al día!"
+        else -> "Puedes realizar el quiz"
     }
-
-    if (ahora > rangoTema.fechaFin) {
-        return ValidacionQuiz(false, "El período de este tema ya finalizó")
-    }
-
-    val quizzesRealizados = estadoTema?.quizzesRealizados ?: 0
-    if (quizzesRealizados >= rangoTema.quizzesRequeridos) {
-        return ValidacionQuiz(false, "Ya completaste todos los quizzes de este tema")
-    }
-
-    if (estadoTema != null && estadoTema.fechaUltimoIntento > 0) {
-        val tiempoDesdeUltimo = (ahora - estadoTema.fechaUltimoIntento) / MILLIS_POR_DIA
-        if (tiempoDesdeUltimo < DIAS_ENTRE_QUIZZES) {
-            return ValidacionQuiz(false, "Debes esperar al menos $DIAS_ENTRE_QUIZZES día(s) entre quizzes")
-        }
-    }
-
-    return ValidacionQuiz(true, "Puedes realizar el quiz")
+    return ValidacionQuiz(true, mensaje)
 }
 
      // Obtiene el tema activo actual según la fecha

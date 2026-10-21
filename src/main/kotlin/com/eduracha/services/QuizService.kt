@@ -159,8 +159,8 @@ class QuizService(
         val curso = cursoRepo.obtenerCursoPorId(cursoId)
             ?: throw IllegalStateException("Curso no encontrado")
 
-        val programacion = curso.programacion
-            ?: throw IllegalStateException("El curso no tiene programación configurada")
+        // Sin programación (cursos antiguos) no se bloquea: las fechas solo son guía de ritmo.
+        val programacion = curso.programacion ?: com.eduracha.models.ProgramacionCurso()
 
         val progreso = ServicioProgreso.obtenerOReconstruirProgreso(userId, cursoId)
             ?: throw IllegalStateException(motivoNoInscrito(cursoId, userId))
