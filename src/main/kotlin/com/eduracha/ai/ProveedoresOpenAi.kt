@@ -45,14 +45,22 @@ open class BaseOpenAiCompatibleProvider(
         val user = req.userPrompt.take(MAX_PROMPT_CHARS)
         require(system.isNotBlank() && user.isNotBlank()) { "Prompt vacío" }
         val body = OAIRequest(model, listOf(OAIMessage("system", system), OAIMessage("user", user)), req.temperature, tokensMaximos(req.maxTokens))
-        val resp: String = try {
+        val http: HttpResponse = try {
             client.post("$baseUrl/chat/completions") {
                 if (apiKey.isNotBlank()) header(HttpHeaders.Authorization, "Bearer $apiKey")
                 contentType(ContentType.Application.Json)
                 setBody(json.encodeToString(body))
-            }.bodyAsText()
+            }
         } catch (e: Exception) {
             throw IllegalStateException("Error de red con proveedor $nombre: ${e.message}")
+        }
+        val resp = http.bodyAsText()
+        val codigo = http.status.value
+        if (codigo == 429 || codigo == 502 || codigo == 503) {
+            val msg = runCatching {
+                json.parseToJsonElement(resp).jsonObject["error"]?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull
+            }.getOrNull() ?: resp.take(200)
+            throw LimiteIaException("Límite del proveedor $nombre ($codigo): $msg", LimitesIa.esperaSugerida(http.headers["retry-after"], msg))
         }
         val content = try {
             val root = json.parseToJsonElement(resp).jsonObject

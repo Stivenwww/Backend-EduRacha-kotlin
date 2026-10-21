@@ -141,6 +141,15 @@ class QuizService(
     }
 
 
+    /** Mensaje claro cuando la cuenta del token no tiene progreso en el curso. */
+    private suspend fun motivoNoInscrito(cursoId: String, userId: String): String {
+        val curso = runCatching { cursoRepo.obtenerCursoPorId(cursoId) }.getOrNull()
+        println("Quiz: $userId sin progreso ni inscripción en $cursoId")
+        return if (curso?.docenteId == userId)
+            "Estás usando la cuenta del docente de este curso. Inicia sesión con la cuenta del estudiante para presentar el quiz."
+        else "No estás inscrito en este curso con la cuenta actual. Cierra sesión y vuelve a entrar; si sigue igual, pide al docente que acepte tu solicitud."
+    }
+
     suspend fun iniciarQuiz(
         cursoId: String,
         temaId: String,
@@ -154,7 +163,7 @@ class QuizService(
             ?: throw IllegalStateException("El curso no tiene programación configurada")
 
         val progreso = ServicioProgreso.obtenerOReconstruirProgreso(userId, cursoId)
-            ?: throw IllegalStateException("No estás inscrito en este curso")
+            ?: throw IllegalStateException(motivoNoInscrito(cursoId, userId))
 
         val validacionMinimo = servicioSeleccion.puedePublicarTema(cursoId, temaId)
         if (!validacionMinimo.permitido) {
@@ -394,6 +403,24 @@ class QuizService(
             modo = quiz.modo
         )
 
+        if (aprobado && (quiz.modo == "oficial" || quiz.modo == "final")) {
+            // Aviso al docente: un estudiante aprobó un tema o el curso
+            runCatching {
+                val curso = cursoRepo.obtenerCursoPorId(quiz.cursoId)
+                val nombre = (ServicioProgreso.obtenerProgreso(userId, quiz.cursoId)?.get("nombre") as? String)
+                    ?.takeIf { it.isNotBlank() } ?: "Un estudiante"
+                val tema = curso?.temas?.values?.firstOrNull { it.id == quiz.temaId }?.titulo ?: curso?.temas?.get(quiz.temaId)?.titulo
+                Notificador.enviar(
+                    curso?.docenteId,
+                    if (quiz.modo == "final") "¡Curso completado!" else "Tema aprobado",
+                    if (quiz.modo == "final") "$nombre aprobó el quiz final de ${curso?.titulo ?: "tu curso"} con $porcentaje%."
+                    else "$nombre aprobó \"${tema ?: "un tema"}\" con $porcentaje%.",
+                    "quiz_aprobado",
+                    mapOf("cursoId" to quiz.cursoId, "temaId" to quiz.temaId, "estudianteId" to userId)
+                )
+            }
+        }
+
         if (aprobado && quiz.modo == "oficial") {
             try {
                 val curso = cursoRepo.obtenerCursoPorId(quiz.cursoId)
@@ -433,7 +460,7 @@ class QuizService(
         ServicioProgreso.regenerarVidas(userId, cursoId, VIDA_REGEN_MINUTOS)
 
         val progreso = ServicioProgreso.obtenerOReconstruirProgreso(userId, cursoId)
-            ?: throw IllegalStateException("No estás inscrito en este curso")
+            ?: throw IllegalStateException(motivoNoInscrito(cursoId, userId))
 
         val vidasActuales = (progreso["vidas"] as? Number)?.toInt() ?: 5
         val vidasMax = (progreso["vidasMax"] as? Number)?.toInt() ?: 5
@@ -632,7 +659,7 @@ class QuizService(
         }
 
         val progreso = ServicioProgreso.obtenerOReconstruirProgreso(userId, cursoId)
-            ?: throw IllegalStateException("No estás inscrito en este curso")
+            ?: throw IllegalStateException(motivoNoInscrito(cursoId, userId))
 
         val vidasActuales = (progreso["vidas"] as? Number)?.toInt() ?: VIDAS_MAX
 
@@ -819,4 +846,4 @@ data class DatosEstudiante(
 )
 
 
-class QuizAbandonadoPorVidasException(message: String) : IllegalStateException(message)
+class QuizAbandonadoPorVidasException(message: String) : IllegalStateException(message)

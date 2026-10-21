@@ -25,6 +25,11 @@ data class OpcionJson(val id: Int, val texto: String, val esCorrecta: Boolean)
  * Valida salidas antes de persistir/mostrar. No inventa capacidades.
  */
 class AiService(private val provider: AiProvider) {
+    companion object {
+        /** Tope por solicitud del docente. Se genera en lotes de [LOTE] para no superar los límites del proveedor. */
+        const val MAX_PREGUNTAS = 30
+        const val LOTE = 10
+    }
     private val json = Json { ignoreUnknownKeys = true }
     val proveedorActual: String get() = provider.nombre
 
@@ -46,27 +51,68 @@ class AiService(private val provider: AiProvider) {
         return resp.content.trim().take(4000)
     }
 
-    suspend fun generarExplicacion(tituloTema: String, contenidoTema: String?): String {
-        val system = ("Eres un profesor experto en pedagogía. Crea explicaciones claras, " +
-            "estructuradas y didácticas (300-500 palabras), con ejemplos. Devuelve SOLO el texto, en texto plano: " +
-            "sin Markdown (nada de **, #, ni viñetas con *), con párrafos separados por una línea en blanco.").take(4000)
-        val user = if (!contenidoTema.isNullOrBlank())
-            "Tema: \"$tituloTema\"\nContenido:\n${contenidoTema.take(8000)}"
-        else "Explica el tema: \"$tituloTema\" con conocimientos generales."
-        val resp = provider.chat(AiChatRequest(system, user, 0.7, 2000))
+    /**
+     * Explicación detallada del tema, en texto plano y por secciones, ceñida al título y al contenido dado.
+     * [contextoCurso] (opcional) evita que la IA se vaya a otra disciplina con el mismo nombre de tema.
+     */
+    suspend fun generarExplicacion(tituloTema: String, contenidoTema: String?, contextoCurso: String? = null): String {
+        val user = buildString {
+            if (!contextoCurso.isNullOrBlank()) append("Curso: ${contextoCurso.take(300)}\n")
+            append("Tema: \"$tituloTema\"\n")
+            if (!contenidoTema.isNullOrBlank()) append("Material del docente sobre el tema:\n${contenidoTema.take(9000)}\n")
+            else append("No hay material del docente: explica el tema con conocimientos generales y correctos.\n")
+        }
+        return pedirExplicacion(user)
+    }
+
+    /**
+     * Explicación construida SOLO con el texto de un documento (por ejemplo, un PDF del tema).
+     * Si el documento es largo, toma fragmentos repartidos por todo el texto.
+     */
+    suspend fun generarExplicacionDesdeDocumento(tituloTema: String, textoDocumento: String, contextoCurso: String? = null): String {
+        require(textoDocumento.isNotBlank()) { "El documento no tiene texto" }
+        val fragmentos = com.eduracha.utils.LectorPdf.fragmentar(textoDocumento)
+        val presupuesto = 9000
+        // Fragmentos espaciados a lo largo del documento, para no quedarse solo con el principio
+        val n = minOf(fragmentos.size, 8).coerceAtLeast(1)
+        val elegidos = (0 until n).map { i -> fragmentos[(i * fragmentos.size) / n] }
+        val material = if (textoDocumento.length <= presupuesto) textoDocumento
+            else elegidos.joinToString("\n[...]\n") { it.take(presupuesto / n) }
+        val user = buildString {
+            if (!contextoCurso.isNullOrBlank()) append("Curso: ${contextoCurso.take(300)}\n")
+            append("Tema: \"$tituloTema\"\n")
+            append("Usa ÚNICAMENTE la información de este documento del docente; no agregues datos que no estén en él.\n")
+            append("DOCUMENTO:\n$material")
+        }
+        return pedirExplicacion(user)
+    }
+
+    private suspend fun pedirExplicacion(user: String): String {
+        val system = ("Eres un profesor experto en pedagogía universitaria. Escribe una explicación DETALLADA y fiel del tema " +
+            "indicado (entre 600 y 900 palabras), en español, para estudiantes que lo ven por primera vez. " +
+            "Habla solo del tema pedido; si el material trae partes de otros temas, ignóralas. " +
+            "Organízala con estas secciones, cada una con su título en una línea propia seguido de dos puntos: " +
+            "Introducción:, Conceptos clave:, Cómo funciona:, Ejemplos:, Errores comunes:, Resumen:. " +
+            "En Ejemplos incluye al menos dos ejemplos concretos. " +
+            "Texto plano: sin Markdown (nada de **, #, ni viñetas con *); para listas usa guiones (- ) al inicio de la línea. " +
+            "Separa los párrafos con una línea en blanco.").take(4000)
+        val resp = provider.chat(AiChatRequest(system, user, 0.5, 3500))
         val texto = com.eduracha.utils.TextoPlano.sinMarkdown(resp.content)
-        require(texto.length >= 50) { "Explicación generada demasiado corta" }
+        require(texto.length >= 200) { "La explicación generada quedó demasiado corta. Intenta de nuevo." }
         return texto
     }
 
-    suspend fun generarPreguntasJson(temaTexto: String, cantidad: Int): List<PreguntaJsonValidada> {
+    suspend fun generarPreguntasJson(temaTexto: String, cantidad: Int, evitar: List<String> = emptyList()): List<PreguntaJsonValidada> {
         require(cantidad in 1..20) { "cantidad debe estar entre 1 y 20" }
         val system = ("Eres un generador de preguntas educativas. Devuelve ÚNICAMENTE JSON válido: " +
             "{\"preguntas\":[{\"texto\":\"...\",\"opciones\":[{\"id\":1,\"texto\":\"...\",\"esCorrecta\":true}," +
             "{\"id\":2,\"texto\":\"...\",\"esCorrecta\":false},{\"id\":3,\"texto\":\"...\",\"esCorrecta\":false}]," +
             "\"dificultad\":\"medio\",\"explicacionCorrecta\":\"...\"}]}. " +
-            "dificultad SOLO facil|medio|dificil. Sin markdown.").take(4000)
-        val user = "Genera $cantidad preguntas de opción múltiple (3 opciones) sobre: \"${temaTexto.take(4000)}\""
+            "dificultad SOLO facil|medio|dificil. Varía la posición de la opción correcta. Sin markdown.").take(4000)
+        val noRepetir = evitar.map { it.trim() }.filter { it.isNotEmpty() }.takeLast(40)
+        val user = "Genera $cantidad preguntas de opción múltiple (3 opciones) sobre: \"${temaTexto.take(6000)}\"" +
+            if (noRepetir.isEmpty()) "" else
+                "\n\nNO repitas ni reformules estas preguntas que ya existen:\n" + noRepetir.joinToString("\n") { "- ${it.take(160)}" }
         val resp = provider.chat(AiChatRequest(system, user, 0.2, 4000))
         val limpio = extraerJson(resp.content)
         val root = try { json.parseToJsonElement(limpio).jsonObject } catch (e: Exception) {
@@ -80,6 +126,40 @@ class AiService(private val provider: AiProvider) {
         if (validas.isEmpty()) throw IllegalStateException("La IA no devolvió preguntas válidas. Intenta de nuevo.")
         return validas
     }
+
+    /**
+     * Genera hasta [MAX_PREGUNTAS] preguntas en lotes de [LOTE], sin repetir las de [evitar] ni entre lotes.
+     * Si un lote falla después de haber obtenido algunas, devuelve las que ya tiene (el docente decide si pide más).
+     */
+    suspend fun generarPreguntasEnLotes(
+        fuente: String,
+        cantidad: Int,
+        evitar: List<String> = emptyList(),
+        alAvanzar: (hechas: Int, total: Int) -> Unit = { _, _ -> }
+    ): List<PreguntaJsonValidada> {
+        require(cantidad in 1..MAX_PREGUNTAS) { "La cantidad debe estar entre 1 y $MAX_PREGUNTAS" }
+        val resultado = mutableListOf<PreguntaJsonValidada>()
+        val vistas = evitar.map(::claveTexto).toMutableSet()
+        var intentosLote = 0
+        val maxLotes = (cantidad + LOTE - 1) / LOTE + 2
+        while (resultado.size < cantidad && intentosLote < maxLotes) {
+            intentosLote++
+            val pedir = minOf(LOTE, cantidad - resultado.size)
+            val lote = try {
+                generarPreguntasJson(fuente, pedir, evitar + resultado.map { it.texto })
+            } catch (e: Exception) {
+                if (resultado.isEmpty()) throw e
+                println("Lote $intentosLote sin preguntas: ${e.message}")
+                break
+            }
+            lote.forEach { p -> if (resultado.size < cantidad && vistas.add(claveTexto(p.texto))) resultado += p }
+            alAvanzar(resultado.size, cantidad)
+        }
+        if (resultado.isEmpty()) throw IllegalStateException("La IA no devolvió preguntas nuevas. Intenta de nuevo.")
+        return resultado
+    }
+
+    private fun claveTexto(t: String) = t.lowercase().replace(Regex("[^\\p{L}\\p{N} ]"), "").replace(Regex("\\s+"), " ").trim()
 
     /** Toma solo el objeto JSON aunque el modelo agregue texto o markdown alrededor. */
     private fun extraerJson(texto: String): String {
@@ -166,8 +246,10 @@ class AiService(private val provider: AiProvider) {
         }
     }
 
-    suspend fun generarYGuardarPreguntas(cursoId: String, temaId: String, temaTexto: String, cantidad: Int): List<Pregunta> {
-        val validadas = generarPreguntasJson(temaTexto, cantidad)
+    suspend fun generarYGuardarPreguntas(
+        cursoId: String, temaId: String, temaTexto: String, cantidad: Int, evitar: List<String> = emptyList()
+    ): List<Pregunta> {
+        val validadas = generarPreguntasEnLotes(temaTexto, cantidad, evitar)
         val refBase = FirebaseDatabase.getInstance().getReference("preguntas")
         return validadas.map { v ->
             val id = refBase.push().key ?: UUID.randomUUID().toString()

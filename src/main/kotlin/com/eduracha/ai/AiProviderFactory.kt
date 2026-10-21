@@ -14,7 +14,7 @@ object AiProviderFactory {
                 connectTimeoutMillis = minOf(cfg.timeoutSeconds * 1000, 30_000)
             }
         }
-        return when (cfg.provider) {
+        val base = when (cfg.provider) {
             "groq" -> GroqProvider(http, cfg.model, cfg.apiKey, cfg.baseUrl)
             "openai" -> OpenAiProvider(http, cfg.model, cfg.apiKey, cfg.baseUrl)
             "anthropic" -> AnthropicProvider(http, cfg.model, cfg.apiKey, cfg.baseUrl ?: "https://api.anthropic.com/v1", cfg.workspaceId)
@@ -26,5 +26,7 @@ object AiProviderFactory {
             "mock" -> MockAiProvider()
             else -> throw IllegalArgumentException("Proveedor no implementado: ${cfg.provider}")
         }
+        // Reintentos ante "límite superado" y máximo 2 llamadas simultáneas a la IA por servidor
+        return if (cfg.provider == "mock") base else ProveedorConReintentos(base)
     }
 }

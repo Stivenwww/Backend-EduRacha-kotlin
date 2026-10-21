@@ -149,6 +149,38 @@ fun Application.preguntasRoutes(aiService: com.eduracha.ai.AiService? = null) {
                 }
             }
 
+            // POST /api/preguntas/aprobar-pendientes  { cursoId, temaId? }
+            // Aprueba de una vez todas las preguntas pendientes del curso (o solo las de un tema).
+            post("/aprobar-pendientes") {
+                val docente = call.exigirRol("docente", "admin") ?: return@post
+                try {
+                    val datos = call.receive<Map<String, String>>()
+                    val cursoId = datos["cursoId"]?.takeIf { it.isNotBlank() }
+                        ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el curso"))
+                    val temaId = datos["temaId"]?.takeIf { it.isNotBlank() }
+                    if (docente.rol != "admin") {
+                        val curso = com.eduracha.repository.CursoRepository().obtenerCursoPorId(cursoId)
+                            ?: return@post call.respond(HttpStatusCode.NotFound, mapOf("error" to "Curso no encontrado"))
+                        if (curso.docenteId.isNotBlank() && curso.docenteId != docente.uid) {
+                            return@post call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Solo el docente del curso puede aprobar sus preguntas"))
+                        }
+                    }
+                    val ids = repo.obtenerPreguntasPorCursoYEstado(cursoId, "pendiente_revision")
+                        .filter { temaId == null || it.temaId == temaId }
+                        .mapNotNull { it.id }
+                    repo.aprobarVarias(ids, docente.email.ifBlank { docente.uid })
+                    call.respond(
+                        HttpStatusCode.OK,
+                        mapOf(
+                            "message" to if (ids.isEmpty()) "No había preguntas pendientes." else "Se aprobaron ${ids.size} preguntas.",
+                            "aprobadas" to ids.size.toString()
+                        )
+                    )
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "No se pudieron aprobar: ${e.message}"))
+                }
+            }
+
             // DELETE /api/preguntas/cache
             delete("/cache") {
                 call.exigirRol("docente", "admin") ?: return@delete
@@ -168,89 +200,58 @@ fun Application.preguntasRoutes(aiService: com.eduracha.ai.AiService? = null) {
             call.respond(HttpStatusCode.OK, resultado)
         }
 
+        // POST /api/ia/explicacion-borrador  { titulo, contenido?, textoDocumento?, curso? }
+        // Escribe la explicación de un tema que aún no existe (formulario "Agregar tema" al crear el curso).
+        // No guarda nada: el docente la revisa o la edita y se guarda con el curso, pendiente de aprobación.
+        post("/api/ia/explicacion-borrador") {
+            call.exigirRol("docente", "admin") ?: return@post
+            val ia = aiService ?: return@post call.respond(
+                HttpStatusCode.ServiceUnavailable,
+                mapOf("error" to "La IA no está configurada en el servidor. Puedes escribir la explicación manualmente.")
+            )
+            try {
+                val datos = call.receive<kotlinx.serialization.json.JsonObject>()
+                fun campo(n: String) = (datos[n] as? kotlinx.serialization.json.JsonPrimitive)?.content?.trim()?.takeIf { it.isNotEmpty() }
+                val titulo = campo("titulo") ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Escribe primero el título del tema."))
+                val documento = campo("textoDocumento")
+                val explicacion = if (documento != null) {
+                    ia.generarExplicacionDesdeDocumento(titulo, documento.take(200_000), campo("curso"))
+                } else {
+                    ia.generarExplicacion(titulo, campo("contenido"), campo("curso"))
+                }
+                call.respond(HttpStatusCode.OK, mapOf("explicacion" to explicacion, "fuente" to "ia"))
+            } catch (e: Exception) {
+                e.printStackTrace()
+                call.respond(
+                    HttpStatusCode.BadGateway,
+                    mapOf("error" to "La IA no pudo escribir la explicación (${e.message ?: "sin detalle"}). Puedes escribirla manualmente.")
+                )
+            }
+        }
+
         // RUTAS DE IA (Generación Automática) — usa AiService desacoplado si existe
         route("/api/preguntas/ia") {
 
-            // POST /api/preguntas/ia/generar-desde-pdf (multipart: archivo, cursoId, temaId, cantidad, dificultad)
-            // Lee el PDF, genera preguntas con su contenido real y las deja pendientes de revisión.
-            post("/generar-desde-pdf") {
-                call.exigirRol("docente", "admin") ?: return@post
-                val ia = aiService ?: return@post call.respond(
-                    HttpStatusCode.ServiceUnavailable,
-                    mapOf("error" to "La IA no está configurada en el servidor (AI_PROVIDER / AI_API_KEY).")
-                )
-                try {
-                    val campos = mutableMapOf<String, String>()
-                    var nombre = "documento.pdf"
-                    var bytes: ByteArray? = null
-                    call.receiveMultipart().forEachPart { parte ->
-                        when (parte) {
-                            is io.ktor.http.content.PartData.FormItem -> campos[parte.name ?: ""] = parte.value
-                            is io.ktor.http.content.PartData.FileItem -> {
-                                nombre = parte.originalFileName ?: nombre
-                                bytes = parte.provider().toByteArray()
-                            }
-                            else -> {}
-                        }
-                        parte.dispose()
-                    }
-                    val cursoId = campos["cursoId"]?.takeIf { it.isNotBlank() }
-                        ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el curso"))
-                    val temaId = campos["temaId"]?.takeIf { it.isNotBlank() }
-                        ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el tema"))
-                    val cantidad = (campos["cantidad"]?.toIntOrNull() ?: 5).coerceIn(1, 20)
-                    val dificultad = campos["dificultad"]?.lowercase()?.takeIf { it in setOf("facil", "medio", "dificil") }
-                    val contenido = bytes ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Adjunta un archivo PDF"))
+            // (El PDF ya no se usa para generar preguntas: se usa al crear el tema, para escribir su explicación.)
 
-                    if (!explicacionRepo.tieneExplicacionAprobada(cursoId, temaId)) {
-                        return@post call.respond(
-                            HttpStatusCode.PreconditionFailed,
-                            mapOf("error" to "No se pueden generar preguntas. El tema no tiene una explicación aprobada.")
-                        )
-                    }
-
-                    val pdf = com.eduracha.utils.LectorPdf.leer(contenido, nombre)
-                    if (pdf.error != null) {
-                        return@post call.respond(HttpStatusCode.UnprocessableEntity, mapOf("error" to pdf.error))
-                    }
-                    val validadas = ia.generarPreguntasDesdeDocumento(pdf.texto, cantidad, dificultad)
-                    val guardadas = ia.guardarPreguntasGeneradas(cursoId, temaId, validadas, "PDF: ${pdf.nombre} (${pdf.paginas} págs.)")
-                    val aviso = if (pdf.truncado) " Solo se usó la primera parte del documento por su extensión." else ""
-                    call.respond(
-                        HttpStatusCode.OK,
-                        PreguntasIAResponse(
-                            message = "Se leyeron ${pdf.paginas} páginas de \"${pdf.nombre}\" y se generaron ${guardadas.size} preguntas. " +
-                                "Quedan pendientes de revisión.$aviso",
-                            total = guardadas.size,
-                            preguntas = guardadas
-                        )
-                    )
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    call.respond(
-                        HttpStatusCode.InternalServerError,
-                        mapOf("error" to (e.message ?: "Error generando preguntas desde el PDF"))
-                    )
-                }
-            }
-
-            // POST /api/preguntas/ia/generar
+            // POST /api/preguntas/ia/generar  { cursoId, temaId, temaTexto, cantidad (1-30) }
+            // La fuente es la explicación aprobada del tema; no se repiten preguntas que el tema ya tiene.
             post("/generar") {
-                call.exigirRol("docente", "admin") ?: return@post
+                val docenteQuePide = call.exigirRol("docente", "admin") ?: return@post
                 try {
-                    val data = call.receive<Map<String, String>>()
-                    val cursoId = data["cursoId"] ?: return@post call.respond(HttpStatusCode.BadRequest, "Falta cursoId")
-                    val temaId = data["temaId"] ?: return@post call.respond(HttpStatusCode.BadRequest, "Falta temaId")
-                    val temaTexto = data["temaTexto"] ?: return@post call.respond(HttpStatusCode.BadRequest, "Falta temaTexto")
-                    val cantidad = (data["cantidad"]?.toIntOrNull() ?: 5).coerceIn(1, 20)
-                    if (temaTexto.length > 4000) {
-                        return@post call.respond(HttpStatusCode.BadRequest, "temaTexto demasiado largo (máx. 4000)")
-                    }
+                    // Se lee como JSON libre: la app envía "cantidad" como número
+                    val data = call.receive<kotlinx.serialization.json.JsonObject>()
+                    fun campo(n: String) = (data[n] as? kotlinx.serialization.json.JsonPrimitive)?.content?.trim()?.takeIf { it.isNotEmpty() }
+                    val cursoId = campo("cursoId") ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el curso"))
+                    val temaId = campo("temaId") ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta el tema"))
+                    val temaTexto = campo("temaTexto").orEmpty()
+                    val maximo = com.eduracha.ai.AiService.MAX_PREGUNTAS
+                    val cantidad = (campo("cantidad")?.toIntOrNull() ?: 5).coerceIn(1, maximo)
 
                     // VALIDACIÓN CRÍTICA: Verificar que existe explicación aprobada
-                    val tieneExplicacion = explicacionRepo.tieneExplicacionAprobada(cursoId, temaId)
-
-                    if (!tieneExplicacion) {
+                    val tema = explicacionRepo.obtenerTema(cursoId, temaId)
+                    val explicacion = tema?.explicacion?.takeIf { tema.explicacionEstado == "aprobada" && it.isNotBlank() }
+                    if (explicacion == null) {
                         return@post call.respond(
                             HttpStatusCode.PreconditionFailed,
                             mapOf(
@@ -260,26 +261,41 @@ fun Application.preguntasRoutes(aiService: com.eduracha.ai.AiService? = null) {
                             )
                         )
                     }
+                    val fuente = "Tema: ${tema.titulo}\n\nExplicación aprobada del tema:\n$explicacion" +
+                        if (temaTexto.isNotBlank()) "\n\nNotas del docente:\n${temaTexto.take(1500)}" else ""
+                    val existentes = runCatching {
+                        repo.obtenerPreguntasPorCursoYEstado(cursoId, null).filter { it.temaId == temaId }.map { it.texto }
+                    }.getOrDefault(emptyList())
 
                     val preguntas = if (aiService != null) {
-                        aiService.generarYGuardarPreguntas(cursoId, temaId, temaTexto, cantidad)
+                        aiService.generarYGuardarPreguntas(cursoId, temaId, fuente, cantidad, existentes)
                     } else {
-                        // Fallback legacy OpenAI directo (compatibilidad)
+                        // Fallback legacy OpenAI directo (compatibilidad, máximo 10)
                         val openAiKey = System.getenv("OPENAI_API_KEY")
                             ?: dotenv()["OPENAI_API_KEY"]
                             ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "IA no configurada (AI_API_KEY/AI_PROVIDER)"))
                         val client = HttpClient(CIO)
                         try {
-                            OpenAIService(client, openAiKey).generarYGuardarPreguntas(cursoId, temaId, temaTexto, cantidad)
+                            OpenAIService(client, openAiKey).generarYGuardarPreguntas(cursoId, temaId, fuente.take(4000), cantidad.coerceAtMost(10))
                         } finally {
                             client.close()
                         }
                     }
 
+                    com.eduracha.services.Notificador.enviar(
+                        docenteQuePide.uid,
+                        "Preguntas listas para revisar",
+                        "La IA generó ${preguntas.size} preguntas del tema ${tema.titulo}. Revísalas y apruébalas.",
+                        "preguntas_pendientes",
+                        mapOf("cursoId" to cursoId, "temaId" to temaId)
+                    )
+                    val mensaje = if (preguntas.size < cantidad)
+                        "Se generaron ${preguntas.size} de $cantidad preguntas (la IA no encontró más preguntas distintas). Quedan pendientes de revisión."
+                    else "Se generaron ${preguntas.size} preguntas. Quedan pendientes de revisión."
                     call.respond(
                         HttpStatusCode.OK,
                         PreguntasIAResponse(
-                            message = "Preguntas generadas correctamente",
+                            message = mensaje,
                             total = preguntas.size,
                             preguntas = preguntas
                         )

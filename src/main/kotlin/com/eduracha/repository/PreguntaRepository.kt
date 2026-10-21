@@ -114,6 +114,24 @@ class PreguntaRepository {
             })
         }
 
+    /** Aprueba varias preguntas en una sola escritura (todas o ninguna). */
+    suspend fun aprobarVarias(ids: List<String>, revisor: String) =
+        lecturaFirebase<Unit> { cont ->
+            if (ids.isEmpty()) { cont.resume(Unit); return@lecturaFirebase }
+            val ahora = java.time.Instant.now().toString()
+            val updates = mutableMapOf<String, Any>()
+            ids.forEach { id ->
+                updates["$id/estado"] = "aprobada"
+                updates["$id/notasRevision"] = "Aprobada en lote por el docente"
+                updates["$id/fechaRevision"] = ahora
+                updates["$id/revisadoPor"] = revisor
+            }
+            ref.updateChildren(updates, DatabaseReference.CompletionListener { error, _ ->
+                if (error != null) cont.resumeWithException(Exception(error.message))
+                else cont.resume(Unit)
+            })
+        }
+
     // Eliminar una pregunta
     suspend fun eliminarPregunta(id: String) =
         lecturaFirebase<Unit> { cont ->

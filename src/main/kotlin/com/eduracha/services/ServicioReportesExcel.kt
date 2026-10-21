@@ -238,7 +238,7 @@ class ServicioReportesExcel(
             
             println("   Resultados: Total=$total, Promedio=$promedio, XP=$xp")
 
-            datosEstudiantes.add(EstudianteReporteData(estudianteId, nombre, total, "%.1f".format(promedio), xp))
+            datosEstudiantes.add(EstudianteReporteData(estudianteId, nombre, total, "%.1f".format(java.util.Locale.US, promedio), xp))
         }
 
         println("\nReporte completado: ${datosEstudiantes.count { it.quizzesRealizados > 0 }} estudiantes con actividad")
@@ -288,7 +288,7 @@ class ServicioReportesExcel(
                     nombre, 
                     intentos, 
                     mejor, 
-                    "%.1f".format(promTiempo), 
+                    "%.1f".format(java.util.Locale.US, promTiempo), 
                     if (aprobado) "Aprobado" else "En progreso"
                 ))
             }
@@ -333,7 +333,7 @@ class ServicioReportesExcel(
                     estudianteId, 
                     nombre, 
                     totalQuizzes, 
-                    "%.1f".format(promedioCorrectas), 
+                    "%.1f".format(java.util.Locale.US, promedioCorrectas), 
                     xpTotal, 
                     temasCompletados
                 ))
@@ -381,9 +381,9 @@ class ServicioReportesExcel(
                     estudianteId, 
                     nombre, 
                     totalQuizzes, 
-                    "%.1f".format(promedioCorrectas), 
+                    "%.1f".format(java.util.Locale.US, promedioCorrectas), 
                     xpTotal, 
-                    "%.1f".format(tiempoPromedio)
+                    "%.1f".format(java.util.Locale.US, tiempoPromedio)
                 ))
             }
         }
@@ -403,73 +403,70 @@ class ServicioReportesExcel(
     }
 
     // MÉTODOS PARA GENERAR ARCHIVOS EXCEL
+    // Se arman con los mismos datos que ve la vista previa de la app y con el diseño de LibroExcelEduRacha.
+
+    private fun nombreArchivo(prefijo: String, curso: String, sufijo: String = ""): String {
+        val base = java.text.Normalizer.normalize(curso, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}"), "").replace(Regex("[^A-Za-z0-9]+"), "_").trim('_').take(40).ifBlank { "curso" }
+        return "EduRacha_${prefijo}_${base}${if (sufijo.isNotBlank()) "_$sufijo" else ""}.xlsx"
+    }
+
+    private fun num(texto: String): Double = texto.replace(",", ".").toDoubleOrNull() ?: 0.0
 
     suspend fun generarReporteDiario(cursoId: String, fecha: LocalDate): Pair<ByteArray, String> {
-        val workbook = XSSFWorkbook()
-        val curso = cursoRepo.obtenerCursoPorId(cursoId) ?: throw IllegalStateException("Curso no encontrado")
-        val estudiantes = cursoRepo.obtenerEstudiantesPorCurso(cursoId)
-        val sheet = workbook.createSheet("Reporte-${fecha}")
-        val headerStyle = crearEstiloEncabezado(workbook)
-        val dataStyle = crearEstiloDatos(workbook)
-        var rowNum = 0
-
-        sheet.createRow(rowNum++).createCell(0).apply { setCellValue("Reporte Diario - ${curso.titulo}"); cellStyle = headerStyle }
-        rowNum++
-
-        val headers = listOf("Estudiante ID", "Nombre", "Quizzes Realizados", "Promedio Correctas", "Experiencia Ganada")
-        val headerRow = sheet.createRow(rowNum++)
-        headers.forEachIndexed { i, h -> headerRow.createCell(i).apply { setCellValue(h); cellStyle = headerStyle } }
-
-        estudiantes.forEach { est ->
-            val estudianteId = est["userId"] as? String ?: ""
-            val nombre = est["nombre"] as? String ?: "N/A"
-            
-            val todosQuizzes = obtenerQuizzesSimplificados(estudianteId, cursoId)
-            val quizzesDia = todosQuizzes.filter { parsearFechaQuiz(it.inicio) == fecha }
-            
-            val total = quizzesDia.size
-            val promedio = if (total > 0) quizzesDia.map { it.preguntasCorrectas }.average() else 0.0
-            val xp = quizzesDia.sumOf { it.experienciaGanada }
-
-            val row = sheet.createRow(rowNum++)
-            row.createCell(0).apply { setCellValue(estudianteId); cellStyle = dataStyle }
-            row.createCell(1).apply { setCellValue(nombre); cellStyle = dataStyle }
-            row.createCell(2).apply { setCellValue(total.toDouble()); cellStyle = dataStyle }
-            row.createCell(3).apply { setCellValue(redondear1(promedio)); cellStyle = dataStyle }
-            row.createCell(4).apply { setCellValue(xp.toDouble()); cellStyle = dataStyle }
-
+        val datos = obtenerDatosReporteDiarioSerializable(cursoId, fecha)
+        val filas = datos.estudiantes.sortedByDescending { it.experienciaGanada }
+        val reporte = LibroExcelEduRacha.Reporte(
+            titulo = "Reporte diario",
+            curso = datos.cursoNombre,
+            detalle = "Fecha: ${fecha.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))}",
+            indicadores = listOf(
+                LibroExcelEduRacha.Indicador("Estudiantes", "${datos.totalEstudiantes}"),
+                LibroExcelEduRacha.Indicador("Con actividad", "${datos.estudiantesConDatos}"),
+                LibroExcelEduRacha.Indicador("Quizzes", "${filas.sumOf { it.quizzesRealizados }}"),
+                LibroExcelEduRacha.Indicador("XP ganada", "${filas.sumOf { it.experienciaGanada }}")
+            ),
+            tituloTabla = "Actividad de cada estudiante",
+            columnas = listOf(
+                LibroExcelEduRacha.Columna("Estudiante", ancho = 28),
+                LibroExcelEduRacha.Columna("Quizzes realizados", LibroExcelEduRacha.TipoCelda.ENTERO),
+                LibroExcelEduRacha.Columna("Promedio de aciertos", LibroExcelEduRacha.TipoCelda.DECIMAL),
+                LibroExcelEduRacha.Columna("XP ganada", LibroExcelEduRacha.TipoCelda.ENTERO),
+                LibroExcelEduRacha.Columna("Estado", LibroExcelEduRacha.TipoCelda.ESTADO)
+            ),
+            filas = filas.map {
+                listOf(it.nombre, it.quizzesRealizados, num(it.promedioCorrectas), it.experienciaGanada,
+                    if (it.quizzesRealizados > 0) "Activo" else "Sin actividad")
+            },
+            grafico = LibroExcelEduRacha.Grafico("XP ganada en el día", 0, 3, "XP")
+        )
+        // Resumen diario por estudiante (se mantiene el comportamiento anterior)
+        datos.estudiantes.forEach { e ->
             try {
-                guardarResumenDiarioUsuario(estudianteId, fecha, mapOf(
-                    "cursoId" to cursoId, 
-                    "cursoNombre" to curso.titulo, 
-                    "fecha" to fecha.toString(), 
-                    "quizzesRealizados" to total, 
-                    "promedioCorrectas" to "%.1f".format(promedio), 
-                    "experienciaGanada" to xp
+                guardarResumenDiarioUsuario(e.estudianteId, fecha, mapOf(
+                    "cursoId" to cursoId,
+                    "cursoNombre" to datos.cursoNombre,
+                    "fecha" to fecha.toString(),
+                    "quizzesRealizados" to e.quizzesRealizados,
+                    "promedioCorrectas" to e.promedioCorrectas,
+                    "experienciaGanada" to e.experienciaGanada
                 ))
-            } catch (e: Exception) {
-                println(" Error guardando resumen para $estudianteId: ${e.message}")
+            } catch (ex: Exception) {
+                println(" Error guardando resumen para ${e.estudianteId}: ${ex.message}")
             }
         }
-
-        headers.indices.forEach { sheet.autoSizeColumn(it) }
-        val out = ByteArrayOutputStream()
-        workbook.write(out)
-        workbook.close()
-
-        return Pair(out.toByteArray(), "reporte_diario_${curso.titulo.replace(" ", "_")}_${fecha}.xlsx")
+        return LibroExcelEduRacha.crear(reporte) to nombreArchivo("Diario", datos.cursoNombre, fecha.toString())
     }
 
     private suspend fun guardarResumenDiarioUsuario(uid: String, fecha: LocalDate, resumen: Map<String, Any>) = lecturaFirebase<Unit> { cont ->
         try {
             val fechaStr = fecha.format(DateTimeFormatter.ISO_DATE)
             val ref = FirebaseDatabase.getInstance().getReference("usuarios").child(uid).child("actividad_diaria").child(fechaStr)
-            ref.setValue(resumen) { error, _ -> 
+            ref.setValue(resumen) { error, _ ->
                 if (error != null) {
                     println(" Error guardando actividad diaria: ${error.message}")
                     cont.resumeWithException(error.toException())
                 } else {
-                    println(" Actividad diaria guardada: $uid - $fechaStr")
                     cont.resume(Unit)
                 }
             }
@@ -479,137 +476,89 @@ class ServicioReportesExcel(
     }
 
     suspend fun generarReportePorTema(cursoId: String, temaId: String): Pair<ByteArray, String> {
-        val workbook = XSSFWorkbook()
-        val curso = cursoRepo.obtenerCursoPorId(cursoId) ?: throw IllegalStateException("Curso no encontrado")
-        val tema = cursoRepo.obtenerTema(cursoId, temaId) ?: throw IllegalStateException("Tema no encontrado")
-        val sheet = workbook.createSheet("Reporte-${tema.titulo}")
-        val headerStyle = crearEstiloEncabezado(workbook)
-        val correctaStyle = crearEstiloCorrecta(workbook)
-        val incorrectaStyle = crearEstiloIncorrecta(workbook)
-        val dataStyle = crearEstiloDatos(workbook)
-        var rowNum = 0
-
-        sheet.createRow(rowNum++).createCell(0).apply { setCellValue("Reporte por Tema - ${tema.titulo}"); cellStyle = headerStyle }
-        rowNum++
-
-        val headers = listOf("Estudiante", "Intentos", "Mejor Puntaje", "Promedio Tiempo (seg)", "Estado")
-        val headerRow = sheet.createRow(rowNum++)
-        headers.forEachIndexed { i, h -> headerRow.createCell(i).apply { setCellValue(h); cellStyle = headerStyle } }
-
-        val estudiantes = cursoRepo.obtenerEstudiantesPorCurso(cursoId)
-        estudiantes.forEach { est ->
-            val estudianteId = est["userId"] as? String ?: ""
-            val nombre = est["nombre"] as? String ?: "N/A"
-            
-            val todosQuizzes = obtenerQuizzesSimplificados(estudianteId, cursoId)
-            val quizzesTema = todosQuizzes.filter { it.temaId == temaId && it.estado == "finalizado" }
-
-            if (quizzesTema.isNotEmpty()) {
-                val intentos = quizzesTema.size
-                val mejor = quizzesTema.maxOf { it.preguntasCorrectas }
-                val promTiempo = quizzesTema.map { it.tiempoUsadoSeg }.average()
-                val aprobado = mejor >= 7
-
-                val row = sheet.createRow(rowNum++)
-                row.createCell(0).apply { setCellValue(nombre); cellStyle = dataStyle }
-                row.createCell(1).apply { setCellValue(intentos.toDouble()); cellStyle = dataStyle }
-                row.createCell(2).apply { setCellValue(mejor.toDouble()); cellStyle = dataStyle }
-                row.createCell(3).apply { setCellValue(redondear1(promTiempo)); cellStyle = dataStyle }
-                row.createCell(4).apply { setCellValue(if (aprobado) "Aprobado" else "En progreso"); cellStyle = if (aprobado) correctaStyle else incorrectaStyle }
-            }
-        }
-
-        headers.indices.forEach { sheet.autoSizeColumn(it) }
-        val out = ByteArrayOutputStream()
-        workbook.write(out)
-        workbook.close()
-
-        return Pair(out.toByteArray(), "reporte_tema_${tema.titulo.replace(" ", "_")}.xlsx")
+        val datos = obtenerDatosReporteTemaSerializable(cursoId, temaId)
+        val filas = datos.estudiantes.sortedByDescending { it.mejorPuntaje }
+        val aprobados = filas.count { it.estado.equals("Aprobado", true) }
+        val reporte = LibroExcelEduRacha.Reporte(
+            titulo = "Reporte por tema",
+            curso = datos.cursoNombre,
+            detalle = "Tema: ${datos.temaNombre}",
+            indicadores = listOf(
+                LibroExcelEduRacha.Indicador("Estudiantes", "${datos.totalEstudiantes}"),
+                LibroExcelEduRacha.Indicador("Presentaron", "${datos.estudiantesConDatos}"),
+                LibroExcelEduRacha.Indicador("Aprobaron", "$aprobados"),
+                LibroExcelEduRacha.Indicador("Intentos", "${filas.sumOf { it.intentos }}")
+            ),
+            tituloTabla = "Resultados del tema",
+            columnas = listOf(
+                LibroExcelEduRacha.Columna("Estudiante", ancho = 28),
+                LibroExcelEduRacha.Columna("Intentos", LibroExcelEduRacha.TipoCelda.ENTERO),
+                LibroExcelEduRacha.Columna("Mejor puntaje", LibroExcelEduRacha.TipoCelda.ENTERO),
+                LibroExcelEduRacha.Columna("Tiempo promedio (s)", LibroExcelEduRacha.TipoCelda.DECIMAL),
+                LibroExcelEduRacha.Columna("Estado", LibroExcelEduRacha.TipoCelda.ESTADO)
+            ),
+            filas = filas.map { listOf(it.nombre, it.intentos, it.mejorPuntaje, num(it.promedioTiempo), it.estado) },
+            grafico = LibroExcelEduRacha.Grafico("Mejor puntaje por estudiante", 0, 2, "Aciertos")
+        )
+        return LibroExcelEduRacha.crear(reporte) to nombreArchivo("Tema", datos.cursoNombre, datos.temaNombre)
     }
 
     suspend fun generarReporteGeneralCurso(cursoId: String): Pair<ByteArray, String> {
-        val workbook = XSSFWorkbook()
-        val curso = cursoRepo.obtenerCursoPorId(cursoId) ?: throw IllegalStateException("Curso no encontrado")
-        val sheet = workbook.createSheet("Reporte General")
-        val headerStyle = crearEstiloEncabezado(workbook)
-        val dataStyle = crearEstiloDatos(workbook)
-        var rowNum = 0
-
-        sheet.createRow(rowNum++).createCell(0).apply { setCellValue("Reporte General - ${curso.titulo}"); cellStyle = headerStyle }
-        rowNum++
-
-        val headers = listOf("Estudiante", "Total Quizzes", "Promedio General", "Experiencia Total", "Temas Completados")
-        val headerRow = sheet.createRow(rowNum++)
-        headers.forEachIndexed { i, h -> headerRow.createCell(i).apply { setCellValue(h); cellStyle = headerStyle } }
-
-        val estudiantes = cursoRepo.obtenerEstudiantesPorCurso(cursoId)
-        estudiantes.forEach { est ->
-            val estudianteId = est["userId"] as? String ?: ""
-            val nombre = est["nombre"] as? String ?: "N/A"
-            
-            val todosQuizzes = obtenerQuizzesSimplificados(estudianteId, cursoId)
-            val quizzesFinalizados = todosQuizzes.filter { it.estado == "finalizado" }
-
-            if (quizzesFinalizados.isNotEmpty()) {
-                val row = sheet.createRow(rowNum++)
-                row.createCell(0).apply { setCellValue(nombre); cellStyle = dataStyle }
-                row.createCell(1).apply { setCellValue(quizzesFinalizados.size.toDouble()); cellStyle = dataStyle }
-                row.createCell(2).apply { setCellValue(redondear1(quizzesFinalizados.map { it.preguntasCorrectas }.average())); cellStyle = dataStyle }
-                row.createCell(3).apply { setCellValue(quizzesFinalizados.sumOf { it.experienciaGanada }.toDouble()); cellStyle = dataStyle }
-                row.createCell(4).apply { setCellValue(quizzesFinalizados.map { it.temaId }.distinct().size.toDouble()); cellStyle = dataStyle }
-            }
-        }
-
-        headers.indices.forEach { sheet.autoSizeColumn(it) }
-        val out = ByteArrayOutputStream()
-        workbook.write(out)
-        workbook.close()
-
-        return Pair(out.toByteArray(), "reporte_general_${curso.titulo.replace(" ", "_")}.xlsx")
+        val datos = obtenerDatosReporteGeneralSerializable(cursoId)
+        val filas = datos.estudiantes.sortedByDescending { it.experienciaTotal }
+        val reporte = LibroExcelEduRacha.Reporte(
+            titulo = "Reporte general del curso",
+            curso = datos.cursoNombre,
+            detalle = "Todo el historial del curso",
+            indicadores = listOf(
+                LibroExcelEduRacha.Indicador("Estudiantes", "${datos.totalEstudiantes}"),
+                LibroExcelEduRacha.Indicador("Con actividad", "${datos.estudiantesConDatos}"),
+                LibroExcelEduRacha.Indicador("Quizzes", "${filas.sumOf { it.totalQuizzes }}"),
+                LibroExcelEduRacha.Indicador("XP total", "${filas.sumOf { it.experienciaTotal }}")
+            ),
+            tituloTabla = "Ranking y avance de cada estudiante",
+            columnas = listOf(
+                LibroExcelEduRacha.Columna("Puesto", LibroExcelEduRacha.TipoCelda.ENTERO, ancho = 8),
+                LibroExcelEduRacha.Columna("Estudiante", ancho = 28),
+                LibroExcelEduRacha.Columna("Quizzes", LibroExcelEduRacha.TipoCelda.ENTERO),
+                LibroExcelEduRacha.Columna("Promedio de aciertos", LibroExcelEduRacha.TipoCelda.DECIMAL),
+                LibroExcelEduRacha.Columna("XP total", LibroExcelEduRacha.TipoCelda.ENTERO),
+                LibroExcelEduRacha.Columna("Temas completados", LibroExcelEduRacha.TipoCelda.ENTERO)
+            ),
+            filas = filas.mapIndexed { i, it ->
+                listOf(i + 1, it.nombre, it.totalQuizzes, num(it.promedioGeneral), it.experienciaTotal, it.temasCompletados)
+            },
+            grafico = LibroExcelEduRacha.Grafico("XP total por estudiante", 1, 4, "XP")
+        )
+        return LibroExcelEduRacha.crear(reporte) to nombreArchivo("General", datos.cursoNombre)
     }
 
     suspend fun generarReporteRangoFechas(cursoId: String, desde: LocalDate, hasta: LocalDate): Pair<ByteArray, String> {
-        val workbook = XSSFWorkbook()
-        val curso = cursoRepo.obtenerCursoPorId(cursoId) ?: throw IllegalStateException("Curso no encontrado")
-        val sheet = workbook.createSheet("Reporte Rango")
-        val headerStyle = crearEstiloEncabezado(workbook)
-        val dataStyle = crearEstiloDatos(workbook)
-        var rowNum = 0
-
-        sheet.createRow(rowNum++).createCell(0).apply { setCellValue("Reporte Rango - ${curso.titulo} ($desde a $hasta)"); cellStyle = headerStyle }
-        rowNum++
-
-        val headers = listOf("Estudiante", "Quizzes en Rango", "Promedio Correctas", "Experiencia", "Tiempo Promedio (seg)")
-        val headerRow = sheet.createRow(rowNum++)
-        headers.forEachIndexed { i, h -> headerRow.createCell(i).apply { setCellValue(h); cellStyle = headerStyle } }
-
-        val estudiantes = cursoRepo.obtenerEstudiantesPorCurso(cursoId)
-        estudiantes.forEach { est ->
-            val estudianteId = est["userId"] as? String ?: ""
-            val nombre = est["nombre"] as? String ?: "N/A"
-            
-            val todosQuizzes = obtenerQuizzesSimplificados(estudianteId, cursoId)
-            val quizzesRango = todosQuizzes.filter { quiz ->
-                val fechaQuiz = parsearFechaQuiz(quiz.inicio)
-                fechaQuiz != null && !fechaQuiz.isBefore(desde) && !fechaQuiz.isAfter(hasta)
-            }
-
-            if (quizzesRango.isNotEmpty()) {
-                val row = sheet.createRow(rowNum++)
-                row.createCell(0).apply { setCellValue(nombre); cellStyle = dataStyle }
-                row.createCell(1).apply { setCellValue(quizzesRango.size.toDouble()); cellStyle = dataStyle }
-                row.createCell(2).apply { setCellValue(redondear1(quizzesRango.map { it.preguntasCorrectas }.average())); cellStyle = dataStyle }
-                row.createCell(3).apply { setCellValue(quizzesRango.sumOf { it.experienciaGanada }.toDouble()); cellStyle = dataStyle }
-                row.createCell(4).apply { setCellValue(redondear1(quizzesRango.map { it.tiempoUsadoSeg }.average())); cellStyle = dataStyle }
-            }
-        }
-
-        headers.indices.forEach { sheet.autoSizeColumn(it) }
-        val out = ByteArrayOutputStream()
-        workbook.write(out)
-        workbook.close()
-
-        return Pair(out.toByteArray(), "reporte_rango_${curso.titulo.replace(" ", "_")}_${desde}_${hasta}.xlsx")
+        val datos = obtenerDatosReporteRangoSerializable(cursoId, desde, hasta)
+        val filas = datos.estudiantes.sortedByDescending { it.experiencia }
+        val f = DateTimeFormatter.ofPattern("dd/MM/yyyy")
+        val reporte = LibroExcelEduRacha.Reporte(
+            titulo = "Reporte por rango de fechas",
+            curso = datos.cursoNombre,
+            detalle = "Del ${desde.format(f)} al ${hasta.format(f)}",
+            indicadores = listOf(
+                LibroExcelEduRacha.Indicador("Estudiantes", "${datos.totalEstudiantes}"),
+                LibroExcelEduRacha.Indicador("Con actividad", "${datos.estudiantesConDatos}"),
+                LibroExcelEduRacha.Indicador("Quizzes", "${filas.sumOf { it.quizzesEnRango }}"),
+                LibroExcelEduRacha.Indicador("XP ganada", "${filas.sumOf { it.experiencia }}")
+            ),
+            tituloTabla = "Actividad en el rango",
+            columnas = listOf(
+                LibroExcelEduRacha.Columna("Estudiante", ancho = 28),
+                LibroExcelEduRacha.Columna("Quizzes", LibroExcelEduRacha.TipoCelda.ENTERO),
+                LibroExcelEduRacha.Columna("Promedio de aciertos", LibroExcelEduRacha.TipoCelda.DECIMAL),
+                LibroExcelEduRacha.Columna("XP ganada", LibroExcelEduRacha.TipoCelda.ENTERO),
+                LibroExcelEduRacha.Columna("Tiempo promedio (s)", LibroExcelEduRacha.TipoCelda.DECIMAL)
+            ),
+            filas = filas.map { listOf(it.nombre, it.quizzesEnRango, num(it.promedioCorrectas), it.experiencia, num(it.tiempoPromedio)) },
+            grafico = LibroExcelEduRacha.Grafico("XP ganada en el rango", 0, 3, "XP")
+        )
+        return LibroExcelEduRacha.crear(reporte) to nombreArchivo("Rango", datos.cursoNombre, "${desde}_a_${hasta}")
     }
 }
 

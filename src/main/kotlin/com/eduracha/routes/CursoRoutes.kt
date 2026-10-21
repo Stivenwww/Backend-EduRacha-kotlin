@@ -15,6 +15,8 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.*
+import io.ktor.utils.io.toByteArray
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.github.cdimascio.dotenv.dotenv
@@ -253,7 +255,11 @@ val openAiKey = getEnv("OPENAI_API_KEY")
                 val estado = call.request.queryParameters["estado"]
 
                 try {
-                    val temas = if (!estado.isNullOrBlank()) {
+                    val temas = if (estado == "todos") {
+                        // Gestión de explicaciones (docente): todos los temas con su explicación, en cualquier estado
+                        call.exigirRol("docente", "admin") ?: return@get
+                        explicacionRepo.obtenerTemasConExplicaciones(cursoId)
+                    } else if (!estado.isNullOrBlank()) {
                         explicacionRepo.obtenerTemasPorEstadoExplicacion(cursoId, estado)
                     } else {
                         explicacionRepo.obtenerTemasFiltrandoExplicacion(cursoId)
@@ -369,7 +375,8 @@ val openAiKey = getEnv("OPENAI_API_KEY")
                         val explicacionGenerada = if (aiDesacoplada != null) {
                             aiDesacoplada.generarExplicacion(
                                 tituloTema = request.tema.titulo,
-                                contenidoTema = request.tema.contenido
+                                contenidoTema = request.tema.contenido,
+                                contextoCurso = runCatching { repo.obtenerCursoPorId(cursoId)?.titulo }.getOrNull()
                             )
                         } else {
                             iaService!!.generarExplicacion(
@@ -474,6 +481,7 @@ val openAiKey = getEnv("OPENAI_API_KEY")
             }
 
             post("{id}/temas/{temaId}/generar-explicacion") {
+                call.exigirRol("docente", "admin") ?: return@post
                 val cursoId = call.parameters["id"] ?: return@post call.respond(
                     HttpStatusCode.BadRequest,
                     mapOf("error" to "Falta ID del curso")
@@ -506,7 +514,8 @@ val openAiKey = getEnv("OPENAI_API_KEY")
                     val explicacionGenerada = if (aiDesacoplada != null) {
                         aiDesacoplada.generarExplicacion(
                             tituloTema = request?.tituloTema ?: tema.titulo,
-                            contenidoTema = request?.contenidoTema ?: tema.contenido
+                            contenidoTema = request?.contenidoTema ?: tema.contenido,
+                            contextoCurso = runCatching { repo.obtenerCursoPorId(cursoId)?.titulo }.getOrNull()
                         )
                     } else {
                         iaService!!.generarExplicacion(
@@ -541,12 +550,13 @@ val openAiKey = getEnv("OPENAI_API_KEY")
                     e.printStackTrace()
                     call.respond(
                         HttpStatusCode.InternalServerError,
-                        mapOf("error" to "Error al generar explicación: ${e.message}")
+                        mapOf("error" to "La IA no pudo generar la explicación (${e.message ?: "sin detalle"}). Puedes escribirla manualmente.")
                     )
                 }
             }
 
             put("{id}/temas/{temaId}/validar-explicacion") {
+                call.exigirRol("docente", "admin") ?: return@put
                 val cursoId = call.parameters["id"] ?: return@put call.respond(
                     HttpStatusCode.BadRequest,
                     mapOf("error" to "Falta ID del curso")
@@ -572,6 +582,21 @@ val openAiKey = getEnv("OPENAI_API_KEY")
                     }
 
                     explicacionRepo.actualizarEstadoExplicacion(cursoId, temaId, nuevoEstado)
+                    if (nuevoEstado == "aprobada") {
+                        // Los estudiantes del curso se enteran de que el tema ya tiene explicación
+                        runCatching {
+                            val tema = repo.obtenerTema(cursoId, temaId)
+                            val curso = repo.obtenerCursoPorId(cursoId)
+                            val uids = repo.obtenerEstudiantesPorCurso(cursoId).mapNotNull { it["userId"] as? String }
+                            com.eduracha.services.Notificador.enviarAVarios(
+                                uids,
+                                "Nuevo contenido disponible",
+                                "Ya puedes estudiar \"${tema?.titulo ?: "un tema nuevo"}\" en ${curso?.titulo ?: "tu curso"}.",
+                                "tema_disponible",
+                                mapOf("cursoId" to cursoId, "temaId" to temaId)
+                            )
+                        }
+                    }
 
                     call.respond(
                         HttpStatusCode.OK,
@@ -584,6 +609,107 @@ val openAiKey = getEnv("OPENAI_API_KEY")
                     call.respond(
                         HttpStatusCode.InternalServerError,
                         mapOf("error" to "Error al validar explicación: ${e.message}")
+                    )
+                }
+            }
+
+            // PUT /api/cursos/{id}/temas/{temaId}/explicacion  { explicacion, estado? }
+            // Edición manual del docente. Funciona aunque la IA haya fallado o el tema no tenga explicación.
+            put("{id}/temas/{temaId}/explicacion") {
+                call.exigirRol("docente", "admin") ?: return@put
+                val cursoId = call.parameters["id"] ?: return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta ID del curso"))
+                val temaId = call.parameters["temaId"] ?: return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta ID del tema"))
+                try {
+                    val datos = call.receive<kotlinx.serialization.json.JsonObject>()
+                    fun campo(n: String) = (datos[n] as? kotlinx.serialization.json.JsonPrimitive)?.content?.trim()
+                    val texto = campo("explicacion").orEmpty()
+                    val estado = campo("estado")?.lowercase()?.takeIf { it.isNotEmpty() } ?: "pendiente"
+                    if (texto.length < 50) {
+                        return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to "La explicación debe tener al menos 50 caracteres."))
+                    }
+                    if (texto.length > 20_000) {
+                        return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to "La explicación no puede superar 20.000 caracteres."))
+                    }
+                    if (estado !in setOf("pendiente", "aprobada")) {
+                        return@put call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Estado inválido: usa pendiente o aprobada."))
+                    }
+                    repo.obtenerTema(cursoId, temaId)
+                        ?: return@put call.respond(HttpStatusCode.NotFound, mapOf("error" to "Tema no encontrado"))
+                    explicacionRepo.actualizarExplicacion(cursoId, temaId, texto, fuente = "docente", estado = estado)
+                    call.respond(
+                        HttpStatusCode.OK,
+                        mapOf(
+                            "message" to if (estado == "aprobada") "Explicación guardada y aprobada." else "Explicación guardada. Queda pendiente de aprobación.",
+                            "nuevoEstado" to estado
+                        )
+                    )
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "No se pudo guardar la explicación: ${e.message}"))
+                }
+            }
+
+            // DELETE /api/cursos/{id}/temas/{temaId}/explicacion
+            delete("{id}/temas/{temaId}/explicacion") {
+                call.exigirRol("docente", "admin") ?: return@delete
+                val cursoId = call.parameters["id"] ?: return@delete call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta ID del curso"))
+                val temaId = call.parameters["temaId"] ?: return@delete call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta ID del tema"))
+                try {
+                    explicacionRepo.eliminarExplicacion(cursoId, temaId)
+                    call.respond(HttpStatusCode.OK, mapOf("message" to "Explicación eliminada. El tema necesita una nueva explicación aprobada."))
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "No se pudo eliminar la explicación: ${e.message}"))
+                }
+            }
+
+            // POST /api/cursos/{id}/temas/{temaId}/explicacion-desde-pdf  (multipart: archivo)
+            // Lee el PDF del tema y la IA escribe la explicación solo con su contenido (queda pendiente de validación).
+            post("{id}/temas/{temaId}/explicacion-desde-pdf") {
+                call.exigirRol("docente", "admin") ?: return@post
+                val cursoId = call.parameters["id"] ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta ID del curso"))
+                val temaId = call.parameters["temaId"] ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Falta ID del tema"))
+                val ia = aiDesacoplada ?: return@post call.respond(
+                    HttpStatusCode.ServiceUnavailable,
+                    mapOf("error" to "La IA no está configurada en el servidor. Puedes escribir la explicación manualmente.")
+                )
+                try {
+                    val tema = repo.obtenerTema(cursoId, temaId)
+                        ?: return@post call.respond(HttpStatusCode.NotFound, mapOf("error" to "Tema no encontrado"))
+                    var nombre = "documento.pdf"
+                    var bytes: ByteArray? = null
+                    call.receiveMultipart().forEachPart { parte ->
+                        if (parte is io.ktor.http.content.PartData.FileItem && bytes == null) {
+                            nombre = parte.originalFileName ?: nombre
+                            bytes = parte.provider().toByteArray()
+                        }
+                        parte.dispose()
+                    }
+                    val contenido = bytes ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Adjunta un archivo PDF"))
+                    val pdf = com.eduracha.utils.LectorPdf.leer(contenido, nombre)
+                    if (pdf.error != null) {
+                        return@post call.respond(HttpStatusCode.UnprocessableEntity, mapOf("error" to pdf.error))
+                    }
+                    val explicacion = ia.generarExplicacionDesdeDocumento(
+                        tituloTema = tema.titulo,
+                        textoDocumento = pdf.texto,
+                        contextoCurso = runCatching { repo.obtenerCursoPorId(cursoId)?.titulo }.getOrNull()
+                    )
+                    explicacionRepo.actualizarExplicacion(cursoId, temaId, explicacion, fuente = "ia", estado = "pendiente")
+                    val temaActualizado = repo.obtenerTema(cursoId, temaId) ?: tema
+                    val aviso = if (pdf.truncado) " Solo se usó la primera parte del documento por su extensión." else ""
+                    call.respond(
+                        HttpStatusCode.OK,
+                        ExplicacionResponse(
+                            message = "Se leyeron ${pdf.paginas} páginas de \"${pdf.nombre}\" y se generó la explicación. Revísala y apruébala.$aviso",
+                            explicacion = explicacion,
+                            fuente = "ia",
+                            tema = temaActualizado
+                        )
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        mapOf("error" to "La IA no pudo generar la explicación (${e.message}). Puedes escribirla manualmente.")
                     )
                 }
             }
@@ -1115,4 +1241,4 @@ val openAiKey = getEnv("OPENAI_API_KEY")
 
     }
 
-} 
+} 

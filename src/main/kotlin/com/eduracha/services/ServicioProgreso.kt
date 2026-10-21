@@ -90,11 +90,25 @@ object ServicioProgreso {
                     }
                 })
         }
-        if (estudiante == null) {
+        // Inscripciones antiguas guardadas con otra clave y el UID en un campo (id / userId / uid)
+        val estudianteFinal = estudiante ?: lecturaFirebase<Map<String, Any?>?> { cont ->
+            db.getReference("cursos/$cursoId/estudiantes")
+                .addListenerForSingleValueEvent(object : ValueEventListener {
+                    override fun onDataChange(snapshot: DataSnapshot) {
+                        val hallado = snapshot.children.firstOrNull { c ->
+                            listOf("id", "userId", "uid", "estudianteId").any { k -> c.child(k).value == usuarioId }
+                        }
+                        @Suppress("UNCHECKED_CAST")
+                        cont.resume(hallado?.value as? Map<String, Any?>)
+                    }
+                    override fun onCancelled(error: DatabaseError) { cont.resume(null) }
+                })
+        }
+        if (estudianteFinal == null) {
             println("Progreso: $usuarioId no figura en cursos/$cursoId/estudiantes")
             return null
         }
-        if ((estudiante["estado"] as? String)?.lowercase() in setOf("eliminado", "inactivo", "bloqueado")) {
+        if ((estudianteFinal["estado"] as? String)?.lowercase() in setOf("eliminado", "inactivo", "bloqueado")) {
             return null
         }
 
@@ -102,8 +116,8 @@ object ServicioProgreso {
         val progresoInicial: Map<String, Any> = mapOf(
             "estudianteId" to usuarioId,
             "cursoId" to cursoId,
-            "nombre" to (estudiante["nombre"] as? String ?: ""),
-            "email" to (estudiante["email"] as? String ?: ""),
+            "nombre" to (estudianteFinal["nombre"] as? String ?: ""),
+            "email" to (estudianteFinal["email"] as? String ?: ""),
             "quizzesCompletados" to 0,
             "practicasCompletadas" to 0,
             "porcentaje" to 0,

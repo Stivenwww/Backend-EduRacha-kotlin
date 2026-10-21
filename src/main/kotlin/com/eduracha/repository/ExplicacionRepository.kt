@@ -73,6 +73,21 @@ class ExplicacionRepository {
             })
     }
 
+    /** Quita la explicación del tema (queda "sin explicación" y hay que crear otra antes de generar preguntas). */
+    suspend fun eliminarExplicacion(cursoId: String, temaId: String) = lecturaFirebase<Unit> { cont ->
+        val refTema = ref.child(cursoId).child("temas").child(temaId)
+        val updates = hashMapOf<String, Any?>(
+            "explicacion" to null,
+            "explicacionFuente" to null,
+            "explicacionEstado" to null,
+            "explicacionUltimaActualizacion" to Instant.now().toString()
+        )
+        refTema.updateChildren(updates, DatabaseReference.CompletionListener { error, _ ->
+            if (error != null) cont.resumeWithException(Exception(error.message))
+            else cont.resume(Unit)
+        })
+    }
+
     // Obtener todos los temas con sus explicaciones (sin filtro)
     suspend fun obtenerTemasConExplicaciones(cursoId: String): List<Tema> =
         lecturaFirebase { cont ->

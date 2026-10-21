@@ -69,6 +69,13 @@ fun Application.solicitudCursoRoutes() {
                     )
 
                     val id = repo.crearSolicitud(solicitud)
+                    com.eduracha.services.Notificador.enviar(
+                        curso.docenteId,
+                        "Nueva solicitud de inscripción",
+                        "${solicitud.estudianteNombre} quiere unirse a ${curso.titulo}.",
+                        "solicitud",
+                        mapOf("cursoId" to cursoId, "estudianteId" to estudianteId)
+                    )
                     call.respond(
                         HttpStatusCode.Created,
                         mapOf("message" to "Solicitud enviada", "id" to id)
@@ -79,6 +86,17 @@ fun Application.solicitudCursoRoutes() {
                         HttpStatusCode.InternalServerError,
                         mapOf("error" to "Error al crear la solicitud: ${e.message}")
                     )
+                }
+            }
+
+            // GET /api/solicitudes/pendientes-docente — todo lo que el docente tiene por revisar (centro de pendientes)
+            get("/pendientes-docente") {
+                val docente = call.exigirRol("docente", "admin") ?: return@get
+                try {
+                    call.respond(HttpStatusCode.OK, com.eduracha.services.ServicioPendientes().obtener(docente.uid))
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "No se pudieron calcular los pendientes: ${e.message}"))
                 }
             }
 
@@ -174,6 +192,14 @@ post("/responder/{solicitudId}") {
             )
         } else {
             repo.actualizarEstadoSolicitud(solicitudId, EstadoSolicitud.RECHAZADA, request.mensaje)
+            com.eduracha.services.Notificador.enviar(
+                solicitud.estudianteId,
+                "Solicitud no aceptada",
+                "El docente no aceptó tu solicitud al curso ${solicitud.codigoCurso}." +
+                    (request.mensaje?.takeIf { it.isNotBlank() }?.let { " Mensaje: $it" } ?: " Puedes volver a solicitarlo."),
+                "solicitud_rechazada",
+                mapOf("cursoId" to solicitud.cursoId)
+            )
             call.respond(HttpStatusCode.OK, mapOf("message" to "Solicitud rechazada"))
         }
     } catch (e: Exception) {
@@ -381,4 +407,4 @@ post("/curso/{cursoId}/regenerar-vidas") {
 }
         }
     }
-}
+}

@@ -121,8 +121,20 @@ suspend fun ApplicationCall.puedeVerReportesDelCurso(cursoId: String?): Boolean 
 }
 
 fun Route.reportesRoutes(servicioReportes: ServicioReportesExcel) {
+    val servicioEstadisticas by lazy { com.eduracha.services.ServicioEstadisticas() }
 
     route("/reportes") {
+
+        // GET /reportes/cursos/{cursoId}/estadisticas — estadísticas del curso para el docente (ranking)
+        get("/cursos/{cursoId}/estadisticas") {
+            try {
+                if (!call.puedeVerReportesDelCurso(call.parameters["cursoId"])) return@get
+                call.respond(HttpStatusCode.OK, servicioEstadisticas.obtener(call.parameters["cursoId"]!!))
+            } catch (e: Exception) {
+                e.printStackTrace()
+                call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "No se pudieron calcular las estadísticas: ${e.message}"))
+            }
+        }
 
         get("/debug/cursos/{cursoId}/diario/fecha/{fecha}") {
             try {
